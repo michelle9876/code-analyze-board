@@ -52,7 +52,6 @@ type GenerateStructuredOutputParams<T extends z.ZodTypeAny> = {
 
 function toResponseJsonSchema<T extends z.ZodTypeAny>(schema: T, schemaName: string) {
   const jsonSchema = zodToJsonSchema(schema, {
-    name: schemaName,
     $refStrategy: "none"
   }) as Record<string, unknown>;
 

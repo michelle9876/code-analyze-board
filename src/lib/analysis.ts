@@ -802,7 +802,7 @@ export async function analyzeFile(context: FileAnalysisContext): Promise<Analysi
       model: selectedModel,
       reasoningEffort,
       verbosity: highComplexity ? "high" : "medium",
-      maxOutputTokens: highComplexity ? 3200 : 2400,
+      maxOutputTokens: highComplexity ? 5200 : 3600,
       system: "You are a staff engineer producing a file-level deep-dive for another developer. Return structured JSON only. Explain the file's responsibility, architecture role, inputs and outputs, dependency direction, key symbols, call sequence, practical reading checklist, and nearby related files or commits. Stay strict to the provided context and prefer precise developer guidance over generic summaries.",
       user: JSON.stringify(
         {
