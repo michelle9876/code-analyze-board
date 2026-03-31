@@ -253,21 +253,69 @@ async function persistArtifact(repositoryId: string, scope: ArtifactScope, path:
 }
 
 async function refreshRepositoryState(repositoryId: string) {
-  const [repository, totalJobs, activeJobs, completedJobs, failedJobs] = await Promise.all([
-    prisma.repository.findUnique({ where: { id: repositoryId } }),
-    prisma.analysisJob.count({ where: { repositoryId } }),
-    prisma.analysisJob.count({ where: { repositoryId, status: { in: [...ACTIVE_STATUSES] } } }),
-    prisma.analysisJob.count({ where: { repositoryId, status: "COMPLETED" } }),
-    prisma.analysisJob.count({ where: { repositoryId, status: "FAILED" } })
-  ]);
-
+  const repository = await prisma.repository.findUnique({ where: { id: repositoryId } });
   if (!repository) {
     return;
   }
 
-  const denominator = Math.max(1, totalJobs);
-  const progress = Math.max(repository.importProgress, Math.round((completedJobs / denominator) * 100));
-  const status = activeJobs > 0 ? "ANALYZING" : failedJobs > 0 && completedJobs === 0 ? "FAILED" : "READY";
+  const coreJobTypes = ["QUICK_SCAN", "ANALYZE_REPO", "ANALYZE_HISTORY"] as const;
+  const [
+    totalJobs,
+    activeJobs,
+    completedJobs,
+    failedJobs,
+    coreTotalJobs,
+    coreCompletedJobs,
+    coreFailedJobs,
+    repoArtifactCount,
+    historyArtifactCount
+  ] = await Promise.all([
+    prisma.analysisJob.count({ where: { repositoryId } }),
+    prisma.analysisJob.count({ where: { repositoryId, status: { in: [...ACTIVE_STATUSES] } } }),
+    prisma.analysisJob.count({ where: { repositoryId, status: "COMPLETED" } }),
+    prisma.analysisJob.count({ where: { repositoryId, status: "FAILED" } }),
+    prisma.analysisJob.count({ where: { repositoryId, type: { in: [...coreJobTypes] } } }),
+    prisma.analysisJob.count({ where: { repositoryId, type: { in: [...coreJobTypes] }, status: "COMPLETED" } }),
+    prisma.analysisJob.count({ where: { repositoryId, type: { in: [...coreJobTypes] }, status: "FAILED" } }),
+    repository.headCommitSha
+      ? prisma.analysisArtifact.count({
+          where: { repositoryId, scope: "REPO", path: "", commitSha: repository.headCommitSha, status: "READY" }
+        })
+      : Promise.resolve(0),
+    repository.headCommitSha
+      ? prisma.analysisArtifact.count({
+          where: { repositoryId, scope: "HISTORY", path: "", commitSha: repository.headCommitSha, status: "READY" }
+        })
+      : Promise.resolve(0)
+  ]);
+
+  const cloneReady = Boolean(repository.headCommitSha);
+  const quickScanReady = Boolean(repository.quickSummary);
+  const repoReady = repoArtifactCount > 0;
+  const historyReady = historyArtifactCount > 0;
+  const coreReady = quickScanReady && repoReady && historyReady;
+  const coreDenominator = Math.max(1, coreTotalJobs || 3);
+  const weightedCoreProgress = Math.round((coreCompletedJobs / coreDenominator) * 88);
+  const progress = Math.max(
+    repository.importProgress,
+    cloneReady ? 15 : 1,
+    quickScanReady ? 45 : 0,
+    repoReady ? 72 : 0,
+    historyReady ? 88 : 0,
+    weightedCoreProgress,
+    coreReady ? 100 : 0
+  );
+  const status = coreReady
+    ? "READY"
+    : activeJobs > 0
+      ? "ANALYZING"
+      : coreFailedJobs > 0 && coreCompletedJobs === 0
+        ? "FAILED"
+        : failedJobs > 0 && completedJobs === 0
+          ? "FAILED"
+          : totalJobs > completedJobs + failedJobs
+            ? "ANALYZING"
+            : "READY";
 
   await prisma.repository.update({
     where: { id: repositoryId },
@@ -335,11 +383,22 @@ async function handleQuickScanJob(job: AnalysisJob) {
     }
   });
 
+  const isLargeRepo = snapshot.totalFiles >= 120 || snapshot.totalDirectories >= 40;
+  const isHugeRepo = snapshot.totalFiles >= 250 || snapshot.totalDirectories >= 80;
   const folderCandidates = [
     ...result.data.notableFolders.map((folder) => folder.path),
+    ...(isLargeRepo ? snapshot.topLevelDirectories : []),
     ...breadthDirectories
   ];
-  const folderLimit = breadthDirectories.length <= 10 ? breadthDirectories.length : 8;
+  const folderLimit = snapshot.totalFiles <= 20
+    ? breadthDirectories.length
+    : isHugeRepo
+      ? 0
+      : isLargeRepo
+        ? 2
+        : breadthDirectories.length <= 10
+          ? breadthDirectories.length
+          : 8;
 
   for (const folderPath of [...new Set(folderCandidates)].slice(0, folderLimit)) {
     const node = findTreeNode(snapshot.tree, folderPath);
@@ -360,7 +419,15 @@ async function handleQuickScanJob(job: AnalysisJob) {
     ...snapshot.representativeFiles.map((file) => file.path),
     ...breadthFiles
   ];
-  const fileLimit = breadthFiles.length <= 20 ? breadthFiles.length : 12;
+  const fileLimit = snapshot.totalFiles <= 20
+    ? Math.min(20, fileCandidates.length)
+    : isHugeRepo
+      ? Math.min(2, fileCandidates.length)
+      : isLargeRepo
+        ? Math.min(4, fileCandidates.length)
+        : breadthFiles.length <= 20
+          ? breadthFiles.length
+          : 12;
 
   for (const filePath of [...new Set(fileCandidates)].slice(0, fileLimit)) {
     const node = findTreeNode(snapshot.tree, filePath);
@@ -516,6 +583,23 @@ async function markJobFailed(job: AnalysisJob, error: unknown) {
   });
 }
 
+export async function recoverStaleJobs() {
+  const staleBefore = new Date(Date.now() - Number(process.env.WORKER_STALE_MS || 1000 * 60 * 15));
+  const recovered = await prisma.analysisJob.updateMany({
+    where: {
+      status: "RUNNING",
+      startedAt: { lt: staleBefore }
+    },
+    data: {
+      status: "PENDING",
+      startedAt: null,
+      errorMessage: null
+    }
+  });
+
+  return recovered.count;
+}
+
 export async function processNextJob() {
   const nextJob = await prisma.analysisJob.findFirst({
     where: {
@@ -528,13 +612,26 @@ export async function processNextJob() {
     return false;
   }
 
-  const job = await prisma.analysisJob.update({
-    where: { id: nextJob.id },
+  const startedAt = new Date();
+  const claimed = await prisma.analysisJob.updateMany({
+    where: { id: nextJob.id, status: "PENDING" },
     data: {
       status: "RUNNING",
-      startedAt: new Date()
+      startedAt
     }
   });
+
+  if (claimed.count === 0) {
+    return true;
+  }
+
+  const job = await prisma.analysisJob.findUnique({
+    where: { id: nextJob.id }
+  });
+
+  if (!job) {
+    return true;
+  }
 
   try {
     switch (job.type) {
