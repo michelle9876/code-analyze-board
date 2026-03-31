@@ -1,4 +1,5 @@
 import type { ArtifactScope } from "@prisma/client";
+import { z } from "zod";
 import {
   type CommitSummary
 } from "@/lib/git";
@@ -20,7 +21,6 @@ import {
   folderAnalysisSchema,
   historySummarySchema,
   quickScanSchema,
-  repoAnalysisSchema
 } from "@/lib/contracts";
 import { MODEL_DEFAULTS } from "@/lib/constants";
 import { generateStructuredOutput, hasGeminiClient } from "@/lib/gemini";
@@ -36,6 +36,61 @@ type AnalysisResult<T> = {
 };
 
 const PROMPT_VERSION = "v2";
+
+const repoModelSchema = z.object({
+  summary: z.string(),
+  architectureOverview: z.string(),
+  majorSubsystems: z.array(
+    z.object({
+      name: z.string(),
+      responsibility: z.string(),
+      importantPaths: z.array(z.string()).max(3)
+    })
+  ).max(3),
+  stack: z.array(
+    z.object({
+      name: z.string(),
+      role: z.string()
+    })
+  ).max(4),
+  developerNotes: z.array(z.string()).max(3),
+  risks: z.array(z.string()).max(3)
+});
+
+const folderModelSchema = z.object({
+  summary: z.string(),
+  responsibility: z.string(),
+  importantChildren: z.array(
+    z.object({
+      path: z.string(),
+      reason: z.string()
+    })
+  ).max(4),
+  upstreamDependencies: z.array(z.string()).max(3),
+  downstreamDependencies: z.array(z.string()).max(3),
+  patterns: z.array(z.string()).max(3),
+  concepts: z.array(z.string()).max(3),
+  considerations: z.array(z.string()).max(2)
+});
+
+const fileModelSchema = z.object({
+  summary: z.string(),
+  purpose: z.string(),
+  architectureRole: z.string(),
+  inputsOutputs: z.array(z.string()).max(4),
+  controlFlow: z.array(z.string()).max(3),
+  callSequence: z.array(z.string()).max(4),
+  patterns: z.array(z.string()).max(3),
+  keySymbols: z.array(
+    z.object({
+      name: z.string(),
+      role: z.string()
+    })
+  ).max(4),
+  dependencyNotes: z.array(z.string()).max(3),
+  technicalPoints: z.array(z.string()).max(3),
+  pitfalls: z.array(z.string()).max(2)
+});
 
 function buildMetadata(
   provider: ArtifactMetadata["provider"],
@@ -667,14 +722,14 @@ export async function analyzeRepository(snapshot: RepositorySnapshot, recentComm
 
   try {
     const reasoningEffort = "medium" as const;
-    const data = await generateStructuredOutput({
-      schema: repoAnalysisSchema,
-      schemaName: "repo_analysis",
+    const modelData = await generateStructuredOutput({
+      schema: repoModelSchema,
+      schemaName: "repo_analysis_compact",
       model: MODEL_DEFAULTS.repo,
       reasoningEffort,
-      verbosity: "high",
-      maxOutputTokens: 4200,
-      system: "You are a principal engineer writing a deep-dive repository briefing for another engineer joining the codebase. Return structured JSON only. Be concrete, path-aware, and grounded in the provided snapshot. Emphasize architecture boundaries, subsystem responsibilities, practical reading order, cross-cutting concerns, technical tradeoffs, and developer-facing risks. Prefer empty arrays over invented claims when evidence is weak.",
+      verbosity: "low",
+      maxOutputTokens: 1400,
+      system: "You are a principal engineer writing a compact repository briefing for another engineer joining the codebase. Return structured JSON only. Keep every field very short and concrete. Do not emit markdown. Do not include diagrams, reading order, key flows, cross-cutting concerns, tradeoffs, or technical point lists. Only return summary, architectureOverview, up to 3 subsystem notes, up to 4 stack items, up to 3 developer notes, and up to 3 risks. Prefer empty arrays over invented claims when evidence is weak.",
       user: JSON.stringify(
         {
           snapshot: {
@@ -682,21 +737,40 @@ export async function analyzeRepository(snapshot: RepositorySnapshot, recentComm
             totalDirectories: snapshot.totalDirectories,
             languages: snapshot.languages,
             frameworks: snapshot.frameworks,
-            importantEntries: snapshot.importantEntries,
-            topLevelDirectories: snapshot.topLevelDirectories,
+            importantEntries: snapshot.importantEntries.slice(0, 5),
+            topLevelDirectories: snapshot.topLevelDirectories.slice(0, 5),
             representativeFiles: snapshot.representativeFiles.map((file) => ({
               path: file.path,
               language: file.language,
               lineCount: file.lineCount,
-              excerpt: truncate(file.excerpt, 1800)
+              excerpt: truncate(file.excerpt, 420)
             }))
           },
-          recentCommits: recentCommits.slice(0, 8)
+          recentCommits: recentCommits.slice(0, 3).map((commit) => ({
+            sha: commit.sha,
+            message: commit.message,
+            changedPaths: commit.changedPaths.slice(0, 3)
+          }))
         },
         null,
         2
       )
     });
+
+    const data: RepoAnalysis = {
+      summary: modelData.summary,
+      architectureOverview: modelData.architectureOverview,
+      majorSubsystems: modelData.majorSubsystems,
+      keyFlows: fallback.keyFlows,
+      recommendedReadingOrder: fallback.recommendedReadingOrder,
+      crossCuttingConcerns: fallback.crossCuttingConcerns,
+      designTradeoffs: fallback.designTradeoffs,
+      stack: modelData.stack,
+      developerNotes: modelData.developerNotes,
+      technicalPoints: fallback.technicalPoints,
+      risks: modelData.risks,
+      diagram: fallback.diagram
+    };
 
     return {
       model: MODEL_DEFAULTS.repo,
@@ -731,30 +805,48 @@ export async function analyzeFolder(context: FolderAnalysisContext): Promise<Ana
 
   try {
     const reasoningEffort = "low" as const;
-    const data = await generateStructuredOutput({
-      schema: folderAnalysisSchema,
-      schemaName: "folder_analysis",
+    const modelData = await generateStructuredOutput({
+      schema: folderModelSchema,
+      schemaName: "folder_analysis_compact",
       model: MODEL_DEFAULTS.deep,
       reasoningEffort,
-      verbosity: "medium",
-      maxOutputTokens: 2600,
-      system: "You are a senior engineer documenting a folder-level architectural deep dive for another developer. Return structured JSON only. Explain the folder's responsibility, the most important child paths, upstream and downstream dependency directions, concepts, technical considerations, and the reading order a developer should follow. Stay grounded in the provided paths, excerpts, and commit context.",
+      verbosity: "low",
+      maxOutputTokens: 1400,
+      system: "You are a senior engineer documenting a compact folder-level brief for another developer. Return structured JSON only. Keep every field short and concrete. Do not emit markdown, diagrams, or reading-order plans. Return only summary, responsibility, up to 4 important children, up to 3 dependencies per direction, up to 3 patterns, up to 3 concepts, and up to 2 concise considerations.",
       user: JSON.stringify(
         {
           path: context.path,
-          childDirectories: context.childDirectories,
-          childFiles: context.childFiles,
+          childDirectories: context.childDirectories.slice(0, 8),
+          childFiles: context.childFiles.slice(0, 8),
           representativeFiles: context.representativeFiles.map((file) => ({
             path: file.path,
             language: file.language,
-            excerpt: truncate(file.excerpt, 1400)
+            excerpt: truncate(file.excerpt, 500)
           })),
-          recentCommits: context.recentCommits.slice(0, 6)
+          recentCommits: context.recentCommits.slice(0, 3).map((commit) => ({
+            sha: commit.sha,
+            message: commit.message,
+            changedPaths: commit.changedPaths.slice(0, 3)
+          }))
         },
         null,
         2
       )
     });
+
+    const data: FolderAnalysis = {
+      summary: modelData.summary,
+      responsibility: modelData.responsibility,
+      importantChildren: modelData.importantChildren,
+      upstreamDependencies: modelData.upstreamDependencies,
+      downstreamDependencies: modelData.downstreamDependencies,
+      patterns: modelData.patterns,
+      concepts: modelData.concepts,
+      technicalPoints: fallback.technicalPoints,
+      considerations: modelData.considerations,
+      readingOrder: fallback.readingOrder,
+      diagram: fallback.diagram
+    };
 
     return {
       model: MODEL_DEFAULTS.deep,
@@ -796,23 +888,23 @@ export async function analyzeFile(context: FileAnalysisContext): Promise<Analysi
 
   try {
     const reasoningEffort = highComplexity ? "medium" as const : "low" as const;
-    const data = await generateStructuredOutput({
-      schema: fileAnalysisSchema,
-      schemaName: "file_analysis",
+    const modelData = await generateStructuredOutput({
+      schema: fileModelSchema,
+      schemaName: "file_analysis_compact",
       model: selectedModel,
       reasoningEffort,
-      verbosity: highComplexity ? "high" : "medium",
-      maxOutputTokens: highComplexity ? 5200 : 3600,
-      system: "You are a staff engineer producing a file-level deep-dive for another developer. Return structured JSON only. Explain the file's responsibility, architecture role, inputs and outputs, dependency direction, key symbols, call sequence, practical reading checklist, and nearby related files or commits. Stay strict to the provided context and prefer precise developer guidance over generic summaries.",
+      verbosity: "low",
+      maxOutputTokens: highComplexity ? 1800 : 1200,
+      system: "You are a staff engineer producing a compact file brief for another developer. Return structured JSON only. Keep every field short and concrete. Do not emit markdown, glossary entries, reading checklists, related file lists, related commits, or diagrams. Return only summary, purpose, architectureRole, compact IO/control/call notes, up to 4 key symbols, up to 3 dependency notes, up to 3 technical points, and up to 2 pitfalls.",
       user: JSON.stringify(
         {
           path: context.path,
           language: context.language,
           lineCount: context.lineCount,
-          imports: context.imports,
-          exportedSymbols: context.exportedSymbols,
-          recentCommits: context.recentCommits.slice(0, 6),
-          excerpt: truncate(context.fullContent, 9000)
+          imports: context.imports.slice(0, 8),
+          exportedSymbols: context.exportedSymbols.slice(0, 8),
+          recentCommits: context.recentCommits.slice(0, 4),
+          excerpt: truncate(context.fullContent, highComplexity ? 2600 : 1600)
         },
         null,
         2
@@ -820,7 +912,22 @@ export async function analyzeFile(context: FileAnalysisContext): Promise<Analysi
     });
 
     const withPreview: FileAnalysisWithPreview = {
-      ...data,
+      summary: modelData.summary,
+      purpose: modelData.purpose,
+      architectureRole: modelData.architectureRole,
+      inputsOutputs: modelData.inputsOutputs,
+      controlFlow: modelData.controlFlow,
+      callSequence: modelData.callSequence,
+      patterns: modelData.patterns,
+      keySymbols: modelData.keySymbols,
+      glossary: fallback.glossary,
+      dependencyNotes: modelData.dependencyNotes,
+      technicalPoints: modelData.technicalPoints,
+      pitfalls: modelData.pitfalls,
+      readingChecklist: fallback.readingChecklist,
+      relatedFiles: fallback.relatedFiles,
+      relatedCommits: fallback.relatedCommits,
+      diagram: fallback.diagram,
       sourcePreviewHtml: context.sourcePreviewHtml,
       sourceLanguage: context.language,
       sourceExcerpt: context.excerpt
@@ -829,7 +936,7 @@ export async function analyzeFile(context: FileAnalysisContext): Promise<Analysi
     return {
       model: selectedModel,
       data: withPreview,
-      mermaidText: diagramToMermaid(data.diagram),
+      mermaidText: diagramToMermaid(withPreview.diagram),
       markdown: buildArtifactMarkdown("FILE", withPreview),
       metadata: buildMetadata("gemini", reasoningEffort, {
         sourceLanguage: context.language,
@@ -873,12 +980,12 @@ export async function analyzeHistory(commits: CommitSummary[]): Promise<Analysis
       schemaName: "history_summary",
       model: MODEL_DEFAULTS.deep,
       reasoningEffort,
-      verbosity: "medium",
-      maxOutputTokens: 2600,
-      system: "You are a technical historian explaining recent codebase evolution to an engineer. Return structured JSON only. Focus on why the recent commits matter, which paths are true hotspots, and what a developer should inspect next. Make impact and note fields actionable from an engineering perspective.",
+      verbosity: "low",
+      maxOutputTokens: 1800,
+      system: "You are a technical historian explaining recent codebase evolution to an engineer. Return structured JSON only. Keep the response compact: 4 themes or fewer, 5 hotspots or fewer, 8 commits or fewer, and short actionable impact notes.",
       user: JSON.stringify(
         {
-          commits: commits.slice(0, 20)
+          commits: commits.slice(0, 12)
         },
         null,
         2

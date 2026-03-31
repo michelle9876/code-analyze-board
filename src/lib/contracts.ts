@@ -17,8 +17,8 @@ export const diagramEdgeSchema = z.object({
 });
 
 export const diagramGraphSchema = z.object({
-  nodes: z.array(diagramNodeSchema),
-  edges: z.array(diagramEdgeSchema)
+  nodes: z.array(diagramNodeSchema).max(8),
+  edges: z.array(diagramEdgeSchema).max(12)
 });
 
 export const artifactMetadataSchema = z.object({
@@ -36,20 +36,20 @@ export const artifactMetadataSchema = z.object({
 export const quickScanSchema = z.object({
   summary: z.string(),
   suggestedCategory: z.string(),
-  tags: z.array(z.string()),
-  stackHighlights: z.array(z.string()),
+  tags: z.array(z.string()).max(6),
+  stackHighlights: z.array(z.string()).max(5),
   notableFolders: z.array(
     z.object({
       path: z.string(),
       reason: z.string()
     })
-  ),
+  ).max(5),
   notableFiles: z.array(
     z.object({
       path: z.string(),
       reason: z.string()
     })
-  )
+  ).max(5)
 });
 
 export const repoAnalysisSchema = z.object({
@@ -59,38 +59,38 @@ export const repoAnalysisSchema = z.object({
     z.object({
       name: z.string(),
       responsibility: z.string(),
-      importantPaths: z.array(z.string())
+      importantPaths: z.array(z.string()).max(3)
     })
-  ),
+  ).max(4),
   keyFlows: z.array(
     z.object({
       title: z.string(),
-      steps: z.array(z.string())
+      steps: z.array(z.string()).max(4)
     })
-  ),
+  ).max(3),
   recommendedReadingOrder: z.array(
     z.object({
       path: z.string(),
       why: z.string()
     })
-  ),
-  crossCuttingConcerns: z.array(z.string()),
+  ).max(5),
+  crossCuttingConcerns: z.array(z.string()).max(4),
   designTradeoffs: z.array(
     z.object({
       decision: z.string(),
       rationale: z.string(),
       downside: z.string()
     })
-  ),
+  ).max(3),
   stack: z.array(
     z.object({
       name: z.string(),
       role: z.string()
     })
-  ),
-  developerNotes: z.array(z.string()),
-  technicalPoints: z.array(z.string()),
-  risks: z.array(z.string()),
+  ).max(5),
+  developerNotes: z.array(z.string()).max(4),
+  technicalPoints: z.array(z.string()).max(5),
+  risks: z.array(z.string()).max(4),
   diagram: diagramGraphSchema
 });
 
@@ -102,19 +102,19 @@ export const folderAnalysisSchema = z.object({
       path: z.string(),
       reason: z.string()
     })
-  ),
-  upstreamDependencies: z.array(z.string()),
-  downstreamDependencies: z.array(z.string()),
-  patterns: z.array(z.string()),
-  concepts: z.array(z.string()),
-  technicalPoints: z.array(z.string()),
-  considerations: z.array(z.string()),
+  ).max(5),
+  upstreamDependencies: z.array(z.string()).max(4),
+  downstreamDependencies: z.array(z.string()).max(4),
+  patterns: z.array(z.string()).max(4),
+  concepts: z.array(z.string()).max(4),
+  technicalPoints: z.array(z.string()).max(4),
+  considerations: z.array(z.string()).max(3),
   readingOrder: z.array(
     z.object({
       path: z.string(),
       why: z.string()
     })
-  ),
+  ).max(4),
   diagram: diagramGraphSchema
 });
 
@@ -127,57 +127,57 @@ export const fileAnalysisSchema = z.object({
   summary: z.string(),
   purpose: z.string(),
   architectureRole: z.string(),
-  inputsOutputs: z.array(z.string()),
-  controlFlow: z.array(z.string()),
-  callSequence: z.array(z.string()),
-  patterns: z.array(z.string()),
+  inputsOutputs: z.array(z.string()).max(5),
+  controlFlow: z.array(z.string()).max(4),
+  callSequence: z.array(z.string()).max(5),
+  patterns: z.array(z.string()).max(4),
   keySymbols: z.array(
     z.object({
       name: z.string(),
       role: z.string()
     })
-  ),
+  ).max(5),
   glossary: z.array(
     z.object({
       term: z.string(),
       description: z.string()
     })
-  ),
-  dependencyNotes: z.array(z.string()),
-  technicalPoints: z.array(z.string()),
-  pitfalls: z.array(z.string()),
-  readingChecklist: z.array(z.string()),
-  relatedFiles: z.array(z.string()),
-  relatedCommits: z.array(relatedCommitSchema),
+  ).max(4),
+  dependencyNotes: z.array(z.string()).max(4),
+  technicalPoints: z.array(z.string()).max(4),
+  pitfalls: z.array(z.string()).max(3),
+  readingChecklist: z.array(z.string()).max(4),
+  relatedFiles: z.array(z.string()).max(5),
+  relatedCommits: z.array(relatedCommitSchema).max(4),
   diagram: diagramGraphSchema
 });
 
 export const historySummarySchema = z.object({
   summary: z.string(),
-  evolutionThemes: z.array(z.string()),
+  evolutionThemes: z.array(z.string()).max(4),
   hotspots: z.array(
     z.object({
       path: z.string(),
       changeCount: z.number().int(),
       reason: z.string()
     })
-  ),
+  ).max(5),
   recentCommits: z.array(
     z.object({
       sha: z.string(),
       author: z.string(),
       date: z.string(),
       message: z.string(),
-      changedPaths: z.array(z.string()),
+      changedPaths: z.array(z.string()).max(4),
       impact: z.string()
     })
-  ),
+  ).max(8),
   pathHighlights: z.array(
     z.object({
       path: z.string(),
       note: z.string()
     })
-  )
+  ).max(5)
 });
 
 export const importRepoRequestSchema = z.object({
