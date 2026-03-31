@@ -1,0 +1,333 @@
+import dynamic from "next/dynamic";
+import { ArrowDownToLine, CalendarClock, FolderTree, GitCommitHorizontal, Lightbulb, Network, Route, ShieldAlert, Sparkles } from "lucide-react";
+import type { AnyArtifactData, ArtifactEnvelope } from "@/lib/contracts";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+
+const GraphView = dynamic(() => import("@/components/graph-view"), {
+  ssr: false,
+  loading: () => <div className="h-[420px] animate-pulse rounded-[1.5rem] border border-line bg-white/60" />
+});
+
+function BulletList({ items }: { items: string[] }) {
+  return (
+    <ul className="space-y-2 text-sm leading-6 text-slate-700">
+      {items.map((item) => (
+        <li key={item} className="flex gap-2">
+          <span className="mt-2 h-1.5 w-1.5 rounded-full bg-accent" />
+          <span>{item}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function PathList({ items }: { items: string[] }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {items.map((item) => (
+        <Badge key={item} className="bg-white text-ink">
+          {item}
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
+export function AnalysisPanel({
+  artifact,
+  pending,
+  scope
+}: {
+  artifact: ArtifactEnvelope<AnyArtifactData> | null;
+  pending: boolean;
+  scope: "repo" | "folder" | "file" | "history";
+}) {
+  if (!artifact && pending) {
+    return <Card className="rounded-[2rem] p-6 text-sm text-slate-600">분석 job이 enqueue되었습니다. worker가 결과를 생성하면 여기에 업데이트됩니다.</Card>;
+  }
+
+  if (!artifact) {
+    return <Card className="rounded-[2rem] p-6 text-sm text-slate-600">아직 분석 결과가 없습니다.</Card>;
+  }
+
+  const data: any = artifact.data;
+  const updatedAt = new Date(artifact.updatedAt).toLocaleString("ko-KR");
+  const stackItems = Array.isArray(data.stack) ? data.stack : [];
+  const readingOrder = [...(Array.isArray(data.recommendedReadingOrder) ? data.recommendedReadingOrder : []), ...(Array.isArray(data.readingOrder) ? data.readingOrder : [])];
+  const dependencyUp = Array.isArray(data.upstreamDependencies) ? data.upstreamDependencies : Array.isArray(data.inboundDependencies) ? data.inboundDependencies : [];
+  const dependencyDown = Array.isArray(data.downstreamDependencies) ? data.downstreamDependencies : Array.isArray(data.outboundDependencies) ? data.outboundDependencies : [];
+  const designTradeoffs = Array.isArray(data.designTradeoffs) ? data.designTradeoffs : [];
+  const keySymbols = Array.isArray(data.keySymbols) ? data.keySymbols : [];
+  const importantPaths = [
+    ...(Array.isArray(data.importantChildren) ? data.importantChildren.map((item: any) => item.path) : []),
+    ...(Array.isArray(data.relatedFiles) ? data.relatedFiles : []),
+    ...(Array.isArray(data.majorSubsystems) ? data.majorSubsystems.flatMap((item: any) => item.importantPaths || []) : []),
+    ...((Array.isArray(data.pathHighlights) ? data.pathHighlights : []).map((item: any) => item.path).filter(Boolean))
+  ];
+
+  return (
+    <div className="space-y-5">
+      <Card className="rounded-[2rem] p-6">
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <Badge className="bg-accentSoft uppercase tracking-[0.2em]">{scope}</Badge>
+          <Badge>{artifact.model}</Badge>
+          {artifact.path ? <Badge>{artifact.path}</Badge> : null}
+          <Badge>{artifact.commitSha.slice(0, 8)}</Badge>
+        </div>
+        <h2 className="mb-3 text-2xl font-semibold text-ink">{data.summary || artifact.summary}</h2>
+        {data.architectureOverview ? <p className="text-sm leading-7 text-slate-700">{data.architectureOverview}</p> : null}
+        {data.responsibility ? <p className="text-sm leading-7 text-slate-700">{data.responsibility}</p> : null}
+        {data.purpose ? <p className="text-sm leading-7 text-slate-700">{data.purpose}</p> : null}
+        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-[1.25rem] border border-line bg-white/75 p-4">
+            <div className="mb-1 text-xs uppercase tracking-[0.2em] text-slate-500">Status</div>
+            <div className="text-sm font-medium text-ink">{artifact.status}</div>
+          </div>
+          <div className="rounded-[1.25rem] border border-line bg-white/75 p-4">
+            <div className="mb-1 text-xs uppercase tracking-[0.2em] text-slate-500">Updated</div>
+            <div className="text-sm font-medium text-ink">{updatedAt}</div>
+          </div>
+          <div className="rounded-[1.25rem] border border-line bg-white/75 p-4">
+            <div className="mb-1 text-xs uppercase tracking-[0.2em] text-slate-500">Model</div>
+            <div className="text-sm font-medium text-ink">{artifact.model}</div>
+          </div>
+          <div className="rounded-[1.25rem] border border-line bg-white/75 p-4">
+            <div className="mb-1 text-xs uppercase tracking-[0.2em] text-slate-500">Commit</div>
+            <div className="truncate text-sm font-medium text-ink">{artifact.commitSha.slice(0, 12)}</div>
+          </div>
+        </div>
+      </Card>
+
+      {stackItems.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <Sparkles className="h-4 w-4 text-accentWarm" />
+            Tech stack and roles
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {stackItems.map((item: any) => (
+              <div key={item.name} className="rounded-[1.25rem] border border-line bg-white/75 p-4">
+                <div className="mb-1 font-medium text-ink">{item.name}</div>
+                <p className="text-sm text-slate-700">{item.role}</p>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
+      {data.majorSubsystems?.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <Route className="h-4 w-4 text-accent" />
+            Major subsystems
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {data.majorSubsystems.map((item: any) => (
+              <div key={item.name} className="rounded-[1.25rem] border border-line bg-white/75 p-4">
+                <div className="mb-1 font-medium text-ink">{item.name}</div>
+                <p className="text-sm text-slate-700">{item.responsibility}</p>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
+      {data.keyFlows?.length || data.controlFlow?.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <Route className="h-4 w-4 text-accentWarm" />
+            Flow understanding
+          </div>
+          {data.keyFlows?.length ? (
+            <div className="space-y-4">
+              {data.keyFlows.map((flow: any) => (
+                <div key={flow.title} className="rounded-[1.25rem] border border-line bg-white/70 p-4">
+                  <div className="mb-2 font-medium text-ink">{flow.title}</div>
+                  <BulletList items={flow.steps} />
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {data.controlFlow?.length ? <BulletList items={data.controlFlow} /> : null}
+        </Card>
+      ) : null}
+
+      {readingOrder.length || data.readingChecklist?.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <FolderTree className="h-4 w-4 text-accentWarm" />
+            Recommended reading order
+          </div>
+          {readingOrder.length ? (
+            <div className="space-y-3">
+              {readingOrder.map((item: any) => (
+                <div key={`${item.path}-${item.why}`} className="rounded-[1.25rem] border border-line bg-white/75 p-4 text-sm">
+                  <div className="mb-1 font-medium text-ink">{item.path}</div>
+                  <p className="text-slate-700">{item.why}</p>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {data.readingChecklist?.length ? <div className={readingOrder.length ? "mt-5" : ""}><BulletList items={data.readingChecklist} /></div> : null}
+        </Card>
+      ) : null}
+
+      {importantPaths.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <FolderTree className="h-4 w-4 text-accent" />
+            Important paths to inspect next
+          </div>
+          <PathList items={[...new Set(importantPaths)]} />
+        </Card>
+      ) : null}
+
+      {dependencyUp.length || dependencyDown.length || data.dependencyNotes?.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <Network className="h-4 w-4 text-accentWarm" />
+            Dependency directions
+          </div>
+          <div className="grid gap-5 md:grid-cols-2">
+            {dependencyUp.length ? (
+              <div>
+                <div className="mb-3 text-xs uppercase tracking-[0.2em] text-slate-500">Upstream</div>
+                <BulletList items={dependencyUp} />
+              </div>
+            ) : null}
+            {dependencyDown.length ? (
+              <div>
+                <div className="mb-3 text-xs uppercase tracking-[0.2em] text-slate-500">Downstream</div>
+                <BulletList items={dependencyDown} />
+              </div>
+            ) : null}
+          </div>
+          {data.dependencyNotes?.length ? <div className="mt-5"><BulletList items={data.dependencyNotes} /></div> : null}
+        </Card>
+      ) : null}
+
+      {artifact.metadata && typeof artifact.metadata.sourcePreviewHtml === "string" ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <ArrowDownToLine className="h-4 w-4 text-accent" />
+            Source preview
+          </div>
+          <div dangerouslySetInnerHTML={{ __html: artifact.metadata.sourcePreviewHtml }} />
+        </Card>
+      ) : null}
+
+      {data.diagram?.nodes?.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 text-sm font-medium text-ink">Architecture visualization</div>
+          <GraphView graph={data.diagram} />
+        </Card>
+      ) : null}
+
+      {artifact.mermaidText ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 text-sm font-medium text-ink">Mermaid export</div>
+          <pre className="overflow-x-auto rounded-[1.25rem] border border-line bg-white/80 p-4 text-xs leading-6 text-slate-700">{artifact.mermaidText}</pre>
+        </Card>
+      ) : null}
+
+      {data.technicalPoints?.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <Lightbulb className="h-4 w-4 text-warning" />
+            Technical points
+          </div>
+          <BulletList items={data.technicalPoints} />
+        </Card>
+      ) : null}
+
+      {data.developerNotes?.length || data.patterns?.length || data.concepts?.length || data.crossCuttingConcerns?.length || data.callSequence?.length || keySymbols.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 text-sm font-medium text-ink">Developer understanding</div>
+          <div className="grid gap-5 md:grid-cols-2">
+            {data.developerNotes?.length ? <BulletList items={data.developerNotes} /> : null}
+            {data.patterns?.length ? <BulletList items={data.patterns} /> : null}
+            {data.concepts?.length ? <BulletList items={data.concepts} /> : null}
+            {data.inputsOutputs?.length ? <BulletList items={data.inputsOutputs} /> : null}
+            {data.crossCuttingConcerns?.length ? <BulletList items={data.crossCuttingConcerns} /> : null}
+            {data.callSequence?.length ? <BulletList items={data.callSequence} /> : null}
+          </div>
+          {keySymbols.length ? (
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              {keySymbols.map((symbol: any) => (
+                <div key={symbol.name} className="rounded-[1.25rem] border border-line bg-white/75 p-4">
+                  <div className="mb-1 font-medium text-ink">{symbol.name}</div>
+                  <p className="text-sm text-slate-700">{symbol.role}</p>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
+
+      {designTradeoffs.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <Sparkles className="h-4 w-4 text-accent" />
+            Design tradeoffs
+          </div>
+          <div className="space-y-3">
+            {designTradeoffs.map((item: any) => (
+              <div key={item.decision} className="rounded-[1.25rem] border border-line bg-white/75 p-4 text-sm">
+                <div className="mb-1 font-medium text-ink">{item.decision}</div>
+                <p className="text-slate-700"><strong>Why:</strong> {item.rationale}</p>
+                <p className="mt-2 text-slate-700"><strong>Cost:</strong> {item.downside}</p>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
+      {data.risks?.length || data.considerations?.length || data.pitfalls?.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <ShieldAlert className="h-4 w-4 text-danger" />
+            Risks and considerations
+          </div>
+          <BulletList items={[...(data.risks || []), ...(data.considerations || []), ...(data.pitfalls || [])]} />
+        </Card>
+      ) : null}
+
+      {data.recentCommits?.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <GitCommitHorizontal className="h-4 w-4 text-accent" />
+            Recent history
+          </div>
+          <div className="space-y-3">
+            {data.recentCommits.map((commit: any) => (
+              <div key={commit.sha} className="rounded-[1.25rem] border border-line bg-white/75 p-4 text-sm">
+                <div className="mb-1 font-medium text-ink">{commit.message}</div>
+                <div className="mb-2 text-xs text-slate-500">{commit.sha.slice(0, 8)} · {commit.author} · {commit.date}</div>
+                <p className="text-slate-700">{commit.impact}</p>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
+      {data.hotspots?.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <CalendarClock className="h-4 w-4 text-warning" />
+            Change hotspots
+          </div>
+          <div className="space-y-3">
+            {data.hotspots.map((item: any) => (
+              <div key={item.path} className="rounded-[1.25rem] border border-line bg-white/75 p-4 text-sm">
+                <div className="mb-1 font-medium text-ink">{item.path}</div>
+                <div className="mb-2 text-xs text-slate-500">{item.changeCount} recent changes</div>
+                <p className="text-slate-700">{item.reason}</p>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+    </div>
+  );
+}

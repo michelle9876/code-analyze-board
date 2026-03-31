@@ -1,0 +1,122 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum RepositoryStatus {
+  IMPORTING
+  ANALYZING
+  READY
+  FAILED
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum JobType {
+  IMPORT_REPOSITORY
+  QUICK_SCAN
+  ANALYZE_REPO
+  ANALYZE_FOLDER
+  ANALYZE_FILE
+  ANALYZE_HISTORY
+}
+
+enum ArtifactScope {
+  REPO
+  FOLDER
+  FILE
+  HISTORY
+}
+
+model Category {
+  id           String       @id @default(cuid())
+  name         String       @unique
+  color        String
+  description  String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  repositories Repository[]
+}
+
+model Repository {
+  id                    String           @id @default(cuid())
+  name                  String
+  owner                 String?
+  url                   String
+  canonicalUrl          String           @unique
+  defaultBranch         String?
+  clonePath             String
+  headCommitSha         String?
+  status                RepositoryStatus @default(IMPORTING)
+  errorMessage          String?
+  quickSummary          String?
+  architectureOverview  String?
+  aiSuggestedCategory   String?
+  aiTagsJson            String?
+  detectedLanguagesJson String?
+  detectedFrameworksJson String?
+  importProgress        Int              @default(0)
+  lastAnalyzedAt        DateTime?
+  categoryId            String?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  category              Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  jobs                  AnalysisJob[]
+  artifacts             AnalysisArtifact[]
+
+  @@index([status, updatedAt])
+}
+
+model AnalysisJob {
+  id           String       @id @default(cuid())
+  repositoryId String
+  type         JobType
+  status       JobStatus    @default(PENDING)
+  priority     Int          @default(100)
+  scope        ArtifactScope?
+  path         String?
+  force        Boolean      @default(false)
+  attempts     Int          @default(0)
+  maxAttempts  Int          @default(3)
+  payloadJson  String?
+  errorMessage String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  repository   Repository   @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@index([status, priority, createdAt])
+  @@index([repositoryId, type, scope, path])
+}
+
+model AnalysisArtifact {
+  id           String        @id @default(cuid())
+  repositoryId String
+  scope        ArtifactScope
+  path         String        @default("")
+  commitSha    String
+  model        String
+  status       String        @default("READY")
+  summary      String?
+  markdown     String?
+  dataJson     String
+  sourceExcerpt String?
+  metadataJson String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  repository   Repository    @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([repositoryId, scope, path, commitSha])
+  @@index([repositoryId, scope, path])
+}

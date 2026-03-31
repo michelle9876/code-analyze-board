@@ -1,0 +1,13 @@
+.next
+node_modules
+.env
+.env.local
+coverage
+.DS_Store
+*.log
+prisma/dev.db
+prisma/dev.db-journal
+prisma/dev.db-shm
+prisma/dev.db-wal
+data/repos/*
+!data/repos/.gitkeep
