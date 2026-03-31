@@ -1,5 +1,8 @@
+import { loadEnvConfig } from "@next/env";
 import { processNextJob } from "@/lib/jobs";
 import { sleep } from "@/lib/utils";
+
+loadEnvConfig(process.cwd());
 
 const pollMs = Number(process.env.WORKER_POLL_MS || 2500);
 
