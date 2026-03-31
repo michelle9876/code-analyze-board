@@ -1,6 +1,5 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
-import crypto from "node:crypto";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -44,7 +43,14 @@ export function uniqueStrings(values: string[]) {
 }
 
 export function hashString(value: string) {
-  return crypto.createHash("sha1").update(value).digest("hex").slice(0, 8);
+  let hash = 2166136261;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, "0").slice(0, 8);
 }
 
 export function formatBytes(size: number) {
