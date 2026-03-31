@@ -26,6 +26,8 @@ export const artifactMetadataSchema = z.object({
   promptVersion: z.string(),
   reasoningEffort: z.string().optional(),
   coverageMode: z.enum(["precomputed", "on-demand"]).optional(),
+  fallbackReason: z.string().optional(),
+  fallbackMessage: z.string().optional(),
   sourceLanguage: z.string().optional(),
   sourcePreviewHtml: z.string().optional(),
   mermaidText: z.string().optional()
@@ -235,6 +237,8 @@ export type RepositoryListItem = {
   latestAnalysisProvider: ArtifactMetadata["provider"] | null;
   latestAnalysisModel: string | null;
   latestAnalysisUpdatedAt: string | null;
+  latestAnalysisReason: string | null;
+  latestAnalysisMessage: string | null;
   hasLiveAnalysis: boolean;
   category: CategoryOption | null;
 };
