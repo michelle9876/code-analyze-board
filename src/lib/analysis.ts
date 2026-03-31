@@ -23,7 +23,7 @@ import {
   repoAnalysisSchema
 } from "@/lib/contracts";
 import { MODEL_DEFAULTS } from "@/lib/constants";
-import { generateStructuredOutput, hasOpenAIClient } from "@/lib/openai";
+import { generateStructuredOutput, hasGeminiClient } from "@/lib/gemini";
 import { truncate, uniqueStrings } from "@/lib/utils";
 
 type AnalysisResult<T> = {
@@ -54,12 +54,12 @@ function describeFallback(error?: unknown): Partial<ArtifactMetadata> {
   if (!error) {
     return {
       fallbackReason: "missing_api_key",
-      fallbackMessage: "OpenAI API key is not configured for this process."
+      fallbackMessage: "Gemini API key is not configured for this process."
     };
   }
 
   const message = truncate(
-    (error instanceof Error ? error.message : typeof error === "string" ? error : "OpenAI analysis failed.")
+    (error instanceof Error ? error.message : typeof error === "string" ? error : "Gemini analysis failed.")
       .replace(/\s+/g, " ")
       .trim(),
     180
@@ -597,7 +597,7 @@ function fallbackHistorySummary(commits: CommitSummary[]): HistorySummary {
 }
 
 export async function analyzeQuickScan(snapshot: RepositorySnapshot): Promise<AnalysisResult<QuickScan>> {
-  if (!hasOpenAIClient()) {
+  if (!hasGeminiClient()) {
     const data = fallbackQuickScan(snapshot);
     return {
       model: MODEL_DEFAULTS.fast,
@@ -655,7 +655,7 @@ export async function analyzeQuickScan(snapshot: RepositorySnapshot): Promise<An
 export async function analyzeRepository(snapshot: RepositorySnapshot, recentCommits: CommitSummary[]): Promise<AnalysisResult<RepoAnalysis>> {
   const fallback = fallbackRepoAnalysis(snapshot, recentCommits);
 
-  if (!hasOpenAIClient()) {
+  if (!hasGeminiClient()) {
     return {
       model: MODEL_DEFAULTS.repo,
       data: fallback,
@@ -703,7 +703,7 @@ export async function analyzeRepository(snapshot: RepositorySnapshot, recentComm
       data,
       mermaidText: diagramToMermaid(data.diagram),
       markdown: buildArtifactMarkdown("REPO", data),
-      metadata: buildMetadata("openai", reasoningEffort)
+      metadata: buildMetadata("gemini", reasoningEffort)
     };
   } catch (error) {
     return {
@@ -719,7 +719,7 @@ export async function analyzeRepository(snapshot: RepositorySnapshot, recentComm
 export async function analyzeFolder(context: FolderAnalysisContext): Promise<AnalysisResult<FolderAnalysis>> {
   const fallback = fallbackFolderAnalysis(context);
 
-  if (!hasOpenAIClient()) {
+  if (!hasGeminiClient()) {
     return {
       model: MODEL_DEFAULTS.deep,
       data: fallback,
@@ -761,7 +761,7 @@ export async function analyzeFolder(context: FolderAnalysisContext): Promise<Ana
       data,
       mermaidText: diagramToMermaid(data.diagram),
       markdown: buildArtifactMarkdown("FOLDER", data),
-      metadata: buildMetadata("openai", reasoningEffort)
+      metadata: buildMetadata("gemini", reasoningEffort)
     };
   } catch (error) {
     return {
@@ -779,7 +779,7 @@ export async function analyzeFile(context: FileAnalysisContext): Promise<Analysi
   const selectedModel = highComplexity ? MODEL_DEFAULTS.repo : MODEL_DEFAULTS.deep;
   const fallback = fallbackFileAnalysis(context);
 
-  if (!hasOpenAIClient()) {
+  if (!hasGeminiClient()) {
     return {
       model: selectedModel,
       data: fallback,
@@ -831,7 +831,7 @@ export async function analyzeFile(context: FileAnalysisContext): Promise<Analysi
       data: withPreview,
       mermaidText: diagramToMermaid(data.diagram),
       markdown: buildArtifactMarkdown("FILE", withPreview),
-      metadata: buildMetadata("openai", reasoningEffort, {
+      metadata: buildMetadata("gemini", reasoningEffort, {
         sourceLanguage: context.language,
         sourcePreviewHtml: context.sourcePreviewHtml
       }),
@@ -856,7 +856,7 @@ export async function analyzeFile(context: FileAnalysisContext): Promise<Analysi
 export async function analyzeHistory(commits: CommitSummary[]): Promise<AnalysisResult<HistorySummary>> {
   const fallback = fallbackHistorySummary(commits);
 
-  if (!hasOpenAIClient()) {
+  if (!hasGeminiClient()) {
     return {
       model: MODEL_DEFAULTS.deep,
       data: fallback,
@@ -890,7 +890,7 @@ export async function analyzeHistory(commits: CommitSummary[]): Promise<Analysis
       data,
       mermaidText: diagramToMermaid(graphFromPaths(data.hotspots.map((item) => item.path), "history")),
       markdown: buildArtifactMarkdown("HISTORY", data),
-      metadata: buildMetadata("openai", reasoningEffort)
+      metadata: buildMetadata("gemini", reasoningEffort)
     };
   } catch (error) {
     return {

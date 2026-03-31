@@ -118,7 +118,7 @@ export const MAX_COMMITS_FOR_HISTORY = 20;
 export const MAX_COMMITS_PER_PATH = 10;
 
 export const MODEL_DEFAULTS = {
-  repo: process.env.OPENAI_MODEL_REPO || "gpt-5.4",
-  deep: process.env.OPENAI_MODEL_DEEP || "gpt-5.4-mini",
-  fast: process.env.OPENAI_MODEL_FAST || "gpt-5.4-nano"
+  repo: process.env.GEMINI_MODEL_REPO || "gemini-2.5-pro",
+  deep: process.env.GEMINI_MODEL_DEEP || "gemini-2.5-flash",
+  fast: process.env.GEMINI_MODEL_FAST || "gemini-2.5-flash-lite"
 };

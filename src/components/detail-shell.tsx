@@ -19,19 +19,19 @@ function collectPaths(tree: TreeNodePayload[], type: "directory" | "file") {
 function describeFallbackReason(reason?: string | null) {
   switch (reason) {
     case "quota_exceeded":
-      return "OpenAI quota가 초과되어 fallback 분석으로 전환되었습니다.";
+      return "Gemini quota가 초과되어 fallback 분석으로 전환되었습니다.";
     case "rate_limited":
-      return "OpenAI rate limit에 걸려 fallback 분석으로 전환되었습니다.";
+      return "Gemini rate limit에 걸려 fallback 분석으로 전환되었습니다.";
     case "invalid_api_key":
-      return "OpenAI API key가 유효하지 않아 fallback 분석으로 전환되었습니다.";
+      return "Gemini API key가 유효하지 않아 fallback 분석으로 전환되었습니다.";
     case "missing_api_key":
-      return "OpenAI API key가 설정되지 않아 fallback 분석으로 전환되었습니다.";
+      return "Gemini API key가 설정되지 않아 fallback 분석으로 전환되었습니다.";
     case "structured_output_error":
       return "Structured output 파싱 실패로 fallback 분석으로 전환되었습니다.";
     case "model_refusal":
       return "모델이 응답을 거절해 fallback 분석으로 전환되었습니다.";
     case "api_error":
-      return "OpenAI API 오류로 fallback 분석으로 전환되었습니다.";
+      return "Gemini API 오류로 fallback 분석으로 전환되었습니다.";
     default:
       return null;
   }
@@ -310,7 +310,7 @@ export function DetailShell({
             <div className="space-y-2 text-sm text-slate-700">
               <div>Tab: <strong>{activeTab}</strong></div>
               <div>Path: <strong>{selectedPath || "root"}</strong></div>
-              <div>Provider: <strong>{currentProvider === "openai" ? "Live AI" : "Fallback"}</strong></div>
+              <div>Provider: <strong>{currentProvider === "fallback" ? "Fallback" : "Live AI"}</strong></div>
               <div>Model: <strong>{currentModel}</strong></div>
               <div>Prompt version: <strong>{currentPromptVersion}</strong></div>
               <div>Coverage: <strong>{currentCoverageMode}</strong></div>

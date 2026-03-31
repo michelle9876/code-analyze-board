@@ -57,7 +57,7 @@ function normalizeArtifactMetadata(raw: unknown): ArtifactMetadata | null {
   const metadata = raw as Record<string, unknown>;
 
   return {
-    provider: metadata.provider === "openai" ? "openai" : "fallback",
+    provider: metadata.provider === "openai" || metadata.provider === "gemini" ? metadata.provider : "fallback",
     promptVersion: typeof metadata.promptVersion === "string" ? metadata.promptVersion : "legacy",
     reasoningEffort: typeof metadata.reasoningEffort === "string" ? metadata.reasoningEffort : undefined,
     coverageMode: metadata.coverageMode === "precomputed" || metadata.coverageMode === "on-demand" ? metadata.coverageMode : undefined,
@@ -100,7 +100,7 @@ export function serializeRepository(
     latestAnalysisUpdatedAt: latestRepoArtifact?.updatedAt.toISOString() || null,
     latestAnalysisReason: latestMetadata?.fallbackReason || null,
     latestAnalysisMessage: latestMetadata?.fallbackMessage || null,
-    hasLiveAnalysis: latestMetadata?.provider === "openai",
+    hasLiveAnalysis: latestMetadata?.provider === "openai" || latestMetadata?.provider === "gemini",
     category: repository.category ? serializeCategory(repository.category) : null
   };
 }

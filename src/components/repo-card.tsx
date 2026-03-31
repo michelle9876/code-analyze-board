@@ -15,9 +15,9 @@ function statusTone(status: string) {
 function describeFallbackReason(reason: string | null) {
   switch (reason) {
     case "quota_exceeded":
-      return "OpenAI quota 초과";
+      return "Gemini quota 초과";
     case "rate_limited":
-      return "OpenAI rate limit";
+      return "Gemini rate limit";
     case "invalid_api_key":
       return "API key 확인 필요";
     case "missing_api_key":
@@ -27,7 +27,7 @@ function describeFallbackReason(reason: string | null) {
     case "model_refusal":
       return "모델 응답 거절";
     case "api_error":
-      return "OpenAI API 오류";
+      return "Gemini API 오류";
     default:
       return null;
   }
@@ -36,7 +36,7 @@ function describeFallbackReason(reason: string | null) {
 export function RepoCard({ repo }: { repo: RepositoryListItem }) {
   const analysisTimestamp = repo.latestAnalysisUpdatedAt || repo.lastAnalyzedAt;
   const providerLabel =
-    repo.latestAnalysisProvider === "openai"
+    repo.latestAnalysisProvider === "openai" || repo.latestAnalysisProvider === "gemini"
       ? "Live AI"
       : repo.latestAnalysisProvider === "fallback"
         ? "Fallback"

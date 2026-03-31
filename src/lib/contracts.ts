@@ -22,7 +22,7 @@ export const diagramGraphSchema = z.object({
 });
 
 export const artifactMetadataSchema = z.object({
-  provider: z.enum(["openai", "fallback"]),
+  provider: z.enum(["openai", "gemini", "fallback"]),
   promptVersion: z.string(),
   reasoningEffort: z.string().optional(),
   coverageMode: z.enum(["precomputed", "on-demand"]).optional(),
