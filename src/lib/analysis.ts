@@ -57,6 +57,19 @@ const repoModelSchema = z.object({
   risks: z.array(z.string()).max(3)
 });
 
+const repoUltraCompactSchema = z.object({
+  summary: z.string(),
+  architectureOverview: z.string(),
+  stack: z.array(
+    z.object({
+      name: z.string(),
+      role: z.string()
+    })
+  ).max(3),
+  developerNotes: z.array(z.string()).max(2),
+  risks: z.array(z.string()).max(2)
+});
+
 const folderModelSchema = z.object({
   summary: z.string(),
   responsibility: z.string(),
@@ -131,6 +144,12 @@ function describeFallback(error?: unknown): Partial<ArtifactMetadata> {
     fallbackReason = "invalid_api_key";
   } else if (lowered.includes("refused")) {
     fallbackReason = "model_refusal";
+  } else if (
+    lowered.includes("unterminated string") ||
+    lowered.includes("json at position") ||
+    lowered.includes("double-quoted property")
+  ) {
+    fallbackReason = "structured_output_error";
   } else if (lowered.includes("parse")) {
     fallbackReason = "structured_output_error";
   }
@@ -709,6 +728,7 @@ export async function analyzeQuickScan(snapshot: RepositorySnapshot): Promise<An
 
 export async function analyzeRepository(snapshot: RepositorySnapshot, recentCommits: CommitSummary[]): Promise<AnalysisResult<RepoAnalysis>> {
   const fallback = fallbackRepoAnalysis(snapshot, recentCommits);
+  const isHugeRepo = snapshot.totalFiles >= 250 || snapshot.totalDirectories >= 80;
 
   if (!hasGeminiClient()) {
     return {
@@ -722,16 +742,33 @@ export async function analyzeRepository(snapshot: RepositorySnapshot, recentComm
 
   try {
     const reasoningEffort = "medium" as const;
-    const modelData = await generateStructuredOutput({
-      schema: repoModelSchema,
-      schemaName: "repo_analysis_compact",
-      model: MODEL_DEFAULTS.repo,
-      reasoningEffort,
-      verbosity: "low",
-      maxOutputTokens: 1400,
-      system: "You are a principal engineer writing a compact repository briefing for another engineer joining the codebase. Return structured JSON only. Keep every field very short and concrete. Do not emit markdown. Do not include diagrams, reading order, key flows, cross-cutting concerns, tradeoffs, or technical point lists. Only return summary, architectureOverview, up to 3 subsystem notes, up to 4 stack items, up to 3 developer notes, and up to 3 risks. Prefer empty arrays over invented claims when evidence is weak.",
-      user: JSON.stringify(
-        {
+    const selectedSchema = isHugeRepo ? repoUltraCompactSchema : repoModelSchema;
+    const selectedSchemaName = isHugeRepo ? "repo_analysis_ultra_compact" : "repo_analysis_compact";
+    const representativeFiles = snapshot.representativeFiles
+      .slice(0, isHugeRepo ? 4 : snapshot.representativeFiles.length)
+      .map((file) => ({
+        path: file.path,
+        language: file.language,
+        lineCount: file.lineCount,
+        excerpt: truncate(file.excerpt, isHugeRepo ? 220 : 420)
+      }));
+    const payload = isHugeRepo
+      ? {
+          snapshot: {
+            totalFiles: snapshot.totalFiles,
+            totalDirectories: snapshot.totalDirectories,
+            languages: snapshot.languages.slice(0, 6),
+            frameworks: snapshot.frameworks.slice(0, 4),
+            importantEntries: snapshot.importantEntries.slice(0, 4),
+            topLevelDirectories: snapshot.topLevelDirectories.slice(0, 4),
+            representativeFiles
+          },
+          recentCommits: recentCommits.slice(0, 2).map((commit) => ({
+            message: commit.message,
+            changedPaths: commit.changedPaths.slice(0, 2)
+          }))
+        }
+      : {
           snapshot: {
             totalFiles: snapshot.totalFiles,
             totalDirectories: snapshot.totalDirectories,
@@ -739,28 +776,31 @@ export async function analyzeRepository(snapshot: RepositorySnapshot, recentComm
             frameworks: snapshot.frameworks,
             importantEntries: snapshot.importantEntries.slice(0, 5),
             topLevelDirectories: snapshot.topLevelDirectories.slice(0, 5),
-            representativeFiles: snapshot.representativeFiles.map((file) => ({
-              path: file.path,
-              language: file.language,
-              lineCount: file.lineCount,
-              excerpt: truncate(file.excerpt, 420)
-            }))
+            representativeFiles
           },
           recentCommits: recentCommits.slice(0, 3).map((commit) => ({
             sha: commit.sha,
             message: commit.message,
             changedPaths: commit.changedPaths.slice(0, 3)
           }))
-        },
-        null,
-        2
-      )
+        };
+    const modelData = await generateStructuredOutput({
+      schema: selectedSchema,
+      schemaName: selectedSchemaName,
+      model: MODEL_DEFAULTS.repo,
+      reasoningEffort,
+      verbosity: "low",
+      maxOutputTokens: isHugeRepo ? 700 : 1400,
+      system: isHugeRepo
+        ? "You are a principal engineer writing an ultra-compact repository briefing for another engineer joining a very large codebase. Return structured JSON only. Keep every field short. Do not emit markdown. Return only summary, architectureOverview, up to 3 stack items, up to 2 developer notes, and up to 2 risks. Do not include subsystem breakdowns or extra commentary."
+        : "You are a principal engineer writing a compact repository briefing for another engineer joining the codebase. Return structured JSON only. Keep every field very short and concrete. Do not emit markdown. Do not include diagrams, reading order, key flows, cross-cutting concerns, tradeoffs, or technical point lists. Only return summary, architectureOverview, up to 3 subsystem notes, up to 4 stack items, up to 3 developer notes, and up to 3 risks. Prefer empty arrays over invented claims when evidence is weak.",
+      user: JSON.stringify(payload, null, 2)
     });
 
     const data: RepoAnalysis = {
       summary: modelData.summary,
       architectureOverview: modelData.architectureOverview,
-      majorSubsystems: modelData.majorSubsystems,
+      majorSubsystems: isHugeRepo ? fallback.majorSubsystems : modelData.majorSubsystems,
       keyFlows: fallback.keyFlows,
       recommendedReadingOrder: fallback.recommendedReadingOrder,
       crossCuttingConcerns: fallback.crossCuttingConcerns,
