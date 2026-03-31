@@ -38,6 +38,7 @@ export function BoardShell({
   const [activeCategory, setActiveCategory] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -122,6 +123,40 @@ export function BoardShell({
       setError(requestError instanceof Error ? requestError.message : "Import failed.");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleDelete(repo: RepositoryListItem) {
+    const confirmed = window.confirm(`"${repo.name}" repository를 삭제할까요?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    const deleteLocalClone = window.confirm("로컬 clone 폴더도 같이 삭제할까요?\n확인을 누르면 디스크까지 삭제하고, 취소를 누르면 board에서만 제거합니다.");
+
+    setDeletingId(repo.id);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/repos/${repo.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deleteLocalClone
+        })
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Repository delete failed.");
+      }
+
+      setRepositories((current) => current.filter((item) => item.id !== repo.id));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Repository delete failed.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -230,7 +265,7 @@ export function BoardShell({
 
       <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
         {filtered.map((repo) => (
-          <RepoCard key={repo.id} repo={repo} />
+          <RepoCard key={repo.id} repo={repo} deleting={deletingId === repo.id} onDelete={handleDelete} />
         ))}
         {filtered.length === 0 ? (
           <Card className="rounded-[2rem] p-8 text-sm text-slate-600">현재 필터에 해당하는 repository가 없습니다.</Card>

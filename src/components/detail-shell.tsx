@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, FolderOpen, GitCommitHorizontal, LayoutPanelTop, RefreshCcw } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Activity, FolderOpen, GitCommitHorizontal, LayoutPanelTop, RefreshCcw, Trash2 } from "lucide-react";
 import type { ArtifactEnvelope, CategoryOption, RepositoryListItem, TreeNodePayload } from "@/lib/contracts";
 import { AnalysisPanel } from "@/components/analysis-panel";
 import { RepoTree } from "@/components/repo-tree";
@@ -58,7 +59,9 @@ export function DetailShell({
   const [historyArtifact, setHistoryArtifact] = useState<ArtifactEnvelope | null>(initialHistoryArtifact);
   const [pending, setPending] = useState(false);
   const [categoryId, setCategoryId] = useState(repository.category?.id || "");
+  const [deleting, setDeleting] = useState(false);
   const requestedPaths = useRef<Set<string>>(new Set());
+  const router = useRouter();
 
   const folderPaths = useMemo(() => collectPaths(tree, "directory"), [tree]);
   const filePaths = useMemo(() => collectPaths(tree, "file"), [tree]);
@@ -180,6 +183,39 @@ export function DetailShell({
     setRepository(payload.repository);
   }
 
+  async function handleDeleteRepository() {
+    const confirmed = window.confirm(`"${repository.name}" repository를 삭제할까요?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    const deleteLocalClone = window.confirm("로컬 clone 폴더도 같이 삭제할까요?\n확인을 누르면 디스크까지 삭제하고, 취소를 누르면 board에서만 제거합니다.");
+
+    setDeleting(true);
+
+    try {
+      const response = await fetch(`/api/repos/${repository.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deleteLocalClone
+        })
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Repository delete failed.");
+      }
+
+      router.push("/");
+      router.refresh();
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Repository delete failed.");
+      setDeleting(false);
+    }
+  }
+
   function handleTreeSelect(node: TreeNodePayload) {
     setSelectedPath(node.path);
     setActiveTab(node.type === "directory" ? "folders" : "files");
@@ -227,6 +263,10 @@ export function DetailShell({
                 <Button variant="secondary" onClick={handleReanalyze}>
                   <RefreshCcw className="mr-2 h-4 w-4" />
                   Reanalyze
+                </Button>
+                <Button variant="danger" onClick={handleDeleteRepository} disabled={deleting}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  {deleting ? "Deleting..." : "Delete"}
                 </Button>
               </div>
             </div>
