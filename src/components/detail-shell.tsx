@@ -208,6 +208,14 @@ export function DetailShell({
         </Card>
 
         <div className="space-y-5">
+          {!repository.hasLiveAnalysis && repository.latestAnalysisReason ? (
+            <Card className="rounded-[2rem] border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
+              <div className="font-semibold">Fallback analysis active</div>
+              <div className="mt-1">{describeFallbackReason(repository.latestAnalysisReason)}</div>
+              {repository.latestAnalysisMessage ? <div className="mt-2 text-xs text-amber-700/90">{repository.latestAnalysisMessage}</div> : null}
+            </Card>
+          ) : null}
+
           <Card className="rounded-[2rem] p-6">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
               <div>

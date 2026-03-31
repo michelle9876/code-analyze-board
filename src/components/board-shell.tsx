@@ -10,6 +10,21 @@ import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { RepoCard } from "@/components/repo-card";
 
+function describeGlobalFallback(reason: string) {
+  switch (reason) {
+    case "quota_exceeded":
+      return "OpenAI quota가 초과되어 현재는 fallback 분석으로 동작 중입니다.";
+    case "rate_limited":
+      return "OpenAI rate limit으로 인해 일부 분석이 fallback으로 전환되었습니다.";
+    case "invalid_api_key":
+      return "OpenAI API key 문제로 fallback 분석이 사용되고 있습니다.";
+    case "missing_api_key":
+      return "OpenAI API key가 설정되지 않아 fallback 분석이 사용되고 있습니다.";
+    default:
+      return "OpenAI 분석 경로에 문제가 있어 fallback 분석이 사용되고 있습니다.";
+  }
+}
+
 export function BoardShell({
   initialRepositories,
   categories
@@ -62,6 +77,20 @@ export function BoardShell({
         .some((value) => String(value).toLowerCase().includes(keyword))
     );
   }, [activeCategory, query, repositories]);
+
+  const fallbackSummary = useMemo(() => {
+    const affected = repositories.filter((repo) => !repo.hasLiveAnalysis && repo.latestAnalysisReason);
+    if (affected.length === 0) {
+      return null;
+    }
+
+    const [first] = affected;
+    return {
+      count: affected.length,
+      message: describeGlobalFallback(first.latestAnalysisReason || "api_error"),
+      detail: first.latestAnalysisMessage
+    };
+  }, [repositories]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -165,6 +194,17 @@ export function BoardShell({
           </button>
         ))}
       </section>
+
+      {fallbackSummary ? (
+        <section className="mb-6">
+          <Card className="rounded-[2rem] border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
+            <div className="font-semibold">Fallback analysis active</div>
+            <div className="mt-1">{fallbackSummary.message}</div>
+            <div className="mt-1 text-amber-800/90">{fallbackSummary.count}개 repository가 현재 fallback 결과를 표시하고 있습니다.</div>
+            {fallbackSummary.detail ? <div className="mt-2 text-xs text-amber-700/90">{fallbackSummary.detail}</div> : null}
+          </Card>
+        </section>
+      ) : null}
 
       <section className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
