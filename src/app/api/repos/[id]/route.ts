@@ -28,7 +28,6 @@ export async function GET(_request: Request, { params }: RouteContext) {
   });
 }
 
-export async function DELETE(_request: Request, { params }: RouteContext) {
 export async function DELETE(request: Request, { params }: RouteContext) {
   const { id } = await params;
   let deleteLocalClone = true;
