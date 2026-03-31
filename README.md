@@ -168,6 +168,7 @@ npm run worker
 - Gemini API를 사용합니다.
 - Structured Outputs는 `responseMimeType: "application/json"` + schema 기반 parsing으로 처리합니다.
 - worker와 app 모두 `.env`를 읽도록 보강되어 있습니다.
+- 큰 repo에서는 compact schema로 Gemini 출력을 줄이고, diagram/reading-order 같은 무거운 필드는 서버가 보강합니다.
 - Gemini 호출이 실패하면 fallback artifact로 저장되며, UI에 fallback reason이 표시됩니다.
 
 ## Known limitations
