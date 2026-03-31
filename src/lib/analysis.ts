@@ -23,7 +23,7 @@ import {
   quickScanSchema,
 } from "@/lib/contracts";
 import { MODEL_DEFAULTS } from "@/lib/constants";
-import { generateStructuredOutput, hasGeminiClient } from "@/lib/gemini";
+import { generatePlainText, generateStructuredOutput, hasGeminiClient } from "@/lib/gemini";
 import { truncate, uniqueStrings } from "@/lib/utils";
 
 type AnalysisResult<T> = {
@@ -215,6 +215,80 @@ function extractDeclaredSymbols(content: string) {
     /interface\s+([A-Za-z0-9_]+)/g,
     /type\s+([A-Za-z0-9_]+)\s*=/g
   ]).slice(0, 8);
+}
+
+function normalizeSectionHeading(line: string) {
+  const match = line
+    .trim()
+    .match(/^(?:[#>*\-\s`]+)?(SUMMARY|ARCHITECTURE|STACK|NOTES|RISKS)(?:\s*:?\s*)$/i);
+
+  return match?.[1]?.toUpperCase() || null;
+}
+
+function toBulletItems(lines: string[]) {
+  return uniqueStrings(
+    lines
+      .flatMap((line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return [];
+        if (/^[-*]\s+/.test(trimmed)) return [trimmed.replace(/^[-*]\s+/, "").trim()];
+        if (/^\d+\.\s+/.test(trimmed)) return [trimmed.replace(/^\d+\.\s+/, "").trim()];
+        return trimmed.split(/\s{2,}|;\s+/).map((item) => item.trim()).filter(Boolean);
+      })
+      .map((item) => item.replace(/^[-*]\s+/, "").trim())
+      .filter(Boolean)
+  );
+}
+
+function toParagraph(lines: string[]) {
+  return lines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseRepoPlainText(raw: string) {
+  const sections: Record<string, string[]> = {
+    SUMMARY: [],
+    ARCHITECTURE: [],
+    STACK: [],
+    NOTES: [],
+    RISKS: []
+  };
+
+  let currentSection: keyof typeof sections | null = null;
+
+  for (const line of raw.replace(/\r/g, "").split("\n")) {
+    const heading = normalizeSectionHeading(line);
+    if (heading && heading in sections) {
+      currentSection = heading as keyof typeof sections;
+      continue;
+    }
+
+    if (currentSection) {
+      sections[currentSection].push(line);
+    }
+  }
+
+  const stack = toBulletItems(sections.STACK)
+    .map((item) => {
+      const [name, role] = item.split(/\s+(?:::|->|-)\s+|:\s+/);
+      const cleanedName = (name || item).trim();
+      const cleanedRole = (role || "핵심 기술 요소").trim();
+      return cleanedName ? { name: cleanedName, role: cleanedRole } : null;
+    })
+    .filter((value): value is { name: string; role: string } => Boolean(value))
+    .slice(0, 3);
+
+  return {
+    summary: toParagraph(sections.SUMMARY),
+    architectureOverview: toParagraph(sections.ARCHITECTURE),
+    stack,
+    developerNotes: toBulletItems(sections.NOTES).slice(0, 2),
+    risks: toBulletItems(sections.RISKS).slice(0, 2)
+  };
 }
 
 function describeSubsystemResponsibility(pathValue: string) {
@@ -784,18 +858,46 @@ export async function analyzeRepository(snapshot: RepositorySnapshot, recentComm
             changedPaths: commit.changedPaths.slice(0, 3)
           }))
         };
-    const modelData = await generateStructuredOutput({
-      schema: selectedSchema,
-      schemaName: selectedSchemaName,
-      model: MODEL_DEFAULTS.repo,
-      reasoningEffort,
-      verbosity: "low",
-      maxOutputTokens: isHugeRepo ? 700 : 1400,
-      system: isHugeRepo
-        ? "You are a principal engineer writing an ultra-compact repository briefing for another engineer joining a very large codebase. Return structured JSON only. Keep every field short. Do not emit markdown. Return only summary, architectureOverview, up to 3 stack items, up to 2 developer notes, and up to 2 risks. Do not include subsystem breakdowns or extra commentary."
-        : "You are a principal engineer writing a compact repository briefing for another engineer joining the codebase. Return structured JSON only. Keep every field very short and concrete. Do not emit markdown. Do not include diagrams, reading order, key flows, cross-cutting concerns, tradeoffs, or technical point lists. Only return summary, architectureOverview, up to 3 subsystem notes, up to 4 stack items, up to 3 developer notes, and up to 3 risks. Prefer empty arrays over invented claims when evidence is weak.",
-      user: JSON.stringify(payload, null, 2)
-    });
+    const modelData = isHugeRepo
+      ? await (async () => {
+          const plainText = await generatePlainText({
+            model: MODEL_DEFAULTS.repo,
+            system: [
+              "You are a principal engineer briefing another engineer on a very large repository.",
+              "Return plain text only using exactly these section headings:",
+              "SUMMARY",
+              "ARCHITECTURE",
+              "STACK",
+              "NOTES",
+              "RISKS",
+              "Under STACK, NOTES, and RISKS, use short bullet points.",
+              "Do not output JSON.",
+              "Do not add any introduction or conclusion outside the sections."
+            ].join("\n"),
+            user: JSON.stringify(payload, null, 2),
+            maxOutputTokens: 700
+          });
+
+          const parsed = parseRepoPlainText(plainText);
+
+          return {
+            summary: parsed.summary || fallback.summary,
+            architectureOverview: parsed.architectureOverview || fallback.architectureOverview,
+            stack: parsed.stack.length ? parsed.stack : fallback.stack.slice(0, 3),
+            developerNotes: parsed.developerNotes.length ? parsed.developerNotes : fallback.developerNotes.slice(0, 2),
+            risks: parsed.risks.length ? parsed.risks : fallback.risks.slice(0, 2)
+          };
+        })()
+      : await generateStructuredOutput({
+          schema: selectedSchema,
+          schemaName: selectedSchemaName,
+          model: MODEL_DEFAULTS.repo,
+          reasoningEffort,
+          verbosity: "low",
+          maxOutputTokens: 1400,
+          system: "You are a principal engineer writing a compact repository briefing for another engineer joining the codebase. Return structured JSON only. Keep every field very short and concrete. Do not emit markdown. Do not include diagrams, reading order, key flows, cross-cutting concerns, tradeoffs, or technical point lists. Only return summary, architectureOverview, up to 3 subsystem notes, up to 4 stack items, up to 3 developer notes, and up to 3 risks. Prefer empty arrays over invented claims when evidence is weak.",
+          user: JSON.stringify(payload, null, 2)
+        });
 
     const data: RepoAnalysis = {
       summary: modelData.summary,

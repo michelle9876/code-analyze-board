@@ -50,6 +50,13 @@ type GenerateStructuredOutputParams<T extends z.ZodTypeAny> = {
   maxOutputTokens?: number;
 };
 
+type GeneratePlainTextParams = {
+  model: string;
+  system: string;
+  user: string;
+  maxOutputTokens?: number;
+};
+
 const JSON_ONLY_RETRY_NOTE = [
   "Return a single valid JSON document only.",
   "Do not wrap the response in markdown or code fences.",
@@ -62,6 +69,13 @@ const JSON_REPAIR_NOTE = [
   "Return one valid JSON document only.",
   "Preserve the same meaning, but shorten long strings if needed.",
   "Do not add markdown fences or extra commentary."
+].join(" ");
+
+const JSON_CONVERT_NOTE = [
+  "You are converting a non-JSON response into valid JSON.",
+  "Return one valid JSON document only.",
+  "Do not explain what you changed.",
+  "Do not add markdown fences or surrounding prose."
 ].join(" ");
 
 function toResponseJsonSchema<T extends z.ZodTypeAny>(schema: T, schemaName: string) {
@@ -141,12 +155,28 @@ function extractBalancedJson(value: string) {
   return null;
 }
 
+function extractJsonWindow(value: string) {
+  const start = value.search(/[\[{]/);
+  const end = Math.max(value.lastIndexOf("}"), value.lastIndexOf("]"));
+
+  if (start === -1 || end === -1 || end <= start) {
+    return null;
+  }
+
+  return value.slice(start, end + 1).trim();
+}
+
 function parseStructuredJson<T extends z.ZodTypeAny>(schema: T, value: string) {
   const attempts = [value, stripCodeFences(value)];
   const balanced = extractBalancedJson(stripCodeFences(value));
+  const windowed = extractJsonWindow(stripCodeFences(value));
 
   if (balanced) {
     attempts.push(balanced);
+  }
+
+  if (windowed && windowed !== balanced) {
+    attempts.push(windowed);
   }
 
   let lastError: unknown;
@@ -206,6 +236,22 @@ export async function generateStructuredOutput<T extends z.ZodTypeAny>({
       }
     });
 
+  const convertToJson = async (plainText: string) =>
+    client.models.generateContent({
+      model,
+      contents: [
+        "Convert the response below into valid JSON that matches the requested schema.",
+        "",
+        plainText
+      ].join("\n"),
+      config: {
+        systemInstruction: `${system}\n\n${JSON_CONVERT_NOTE}`,
+        maxOutputTokens,
+        responseMimeType: "application/json",
+        responseJsonSchema
+      }
+    });
+
   const initialResponse = await generate(system);
   const initialText =
     typeof initialResponse.text === "string"
@@ -233,8 +279,46 @@ export async function generateStructuredOutput<T extends z.ZodTypeAny>({
       try {
         return parseStructuredJson(schema, repairText);
       } catch {
-        throw initialError;
+        const convertResponse = await convertToJson(repairText || retryText || initialText);
+        const convertText =
+          typeof convertResponse.text === "string"
+            ? convertResponse.text
+            : String(convertResponse.text || "");
+
+        try {
+          return parseStructuredJson(schema, convertText);
+        } catch {
+          throw initialError;
+        }
       }
     }
   }
+}
+
+export async function generatePlainText({
+  model,
+  system,
+  user,
+  maxOutputTokens = 1200
+}: GeneratePlainTextParams) {
+  const client = getGeminiClient();
+
+  if (!client) {
+    throw new Error("GEMINI_API_KEY is not configured.");
+  }
+
+  const response = await client.models.generateContent({
+    model,
+    contents: user,
+    config: {
+      systemInstruction: system,
+      maxOutputTokens
+    }
+  });
+
+  return stripCodeFences(
+    typeof response.text === "string"
+      ? response.text
+      : String(response.text || "")
+  );
 }
