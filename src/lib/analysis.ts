@@ -50,6 +50,42 @@ function buildMetadata(
   };
 }
 
+function describeFallback(error?: unknown): Partial<ArtifactMetadata> {
+  if (!error) {
+    return {
+      fallbackReason: "missing_api_key",
+      fallbackMessage: "OpenAI API key is not configured for this process."
+    };
+  }
+
+  const message = truncate(
+    (error instanceof Error ? error.message : typeof error === "string" ? error : "OpenAI analysis failed.")
+      .replace(/\s+/g, " ")
+      .trim(),
+    180
+  );
+  const lowered = message.toLowerCase();
+
+  let fallbackReason = "api_error";
+
+  if (lowered.includes("quota")) {
+    fallbackReason = "quota_exceeded";
+  } else if (lowered.includes("rate limit") || lowered.startsWith("429")) {
+    fallbackReason = "rate_limited";
+  } else if (lowered.includes("api key") || lowered.includes("unauthorized") || lowered.startsWith("401")) {
+    fallbackReason = "invalid_api_key";
+  } else if (lowered.includes("refused")) {
+    fallbackReason = "model_refusal";
+  } else if (lowered.includes("parse")) {
+    fallbackReason = "structured_output_error";
+  }
+
+  return {
+    fallbackReason,
+    fallbackMessage: message
+  };
+}
+
 function buildReadingOrder(paths: string[]) {
   return uniqueStrings(paths)
     .filter(Boolean)
@@ -449,7 +485,7 @@ export async function analyzeRepository(snapshot: RepositorySnapshot, recentComm
       data: fallback,
       mermaidText: diagramToMermaid(fallback.diagram),
       markdown: buildArtifactMarkdown("REPO", fallback),
-      metadata: buildMetadata("fallback", "medium")
+      metadata: buildMetadata("fallback", "medium", describeFallback())
     };
   }
 
@@ -493,13 +529,13 @@ export async function analyzeRepository(snapshot: RepositorySnapshot, recentComm
       markdown: buildArtifactMarkdown("REPO", data),
       metadata: buildMetadata("openai", reasoningEffort)
     };
-  } catch {
+  } catch (error) {
     return {
       model: MODEL_DEFAULTS.repo,
       data: fallback,
       mermaidText: diagramToMermaid(fallback.diagram),
       markdown: buildArtifactMarkdown("REPO", fallback),
-      metadata: buildMetadata("fallback", "medium")
+      metadata: buildMetadata("fallback", "medium", describeFallback(error))
     };
   }
 }
@@ -513,7 +549,7 @@ export async function analyzeFolder(context: FolderAnalysisContext): Promise<Ana
       data: fallback,
       mermaidText: diagramToMermaid(fallback.diagram),
       markdown: buildArtifactMarkdown("FOLDER", fallback),
-      metadata: buildMetadata("fallback", "low")
+      metadata: buildMetadata("fallback", "low", describeFallback())
     };
   }
 
@@ -551,13 +587,13 @@ export async function analyzeFolder(context: FolderAnalysisContext): Promise<Ana
       markdown: buildArtifactMarkdown("FOLDER", data),
       metadata: buildMetadata("openai", reasoningEffort)
     };
-  } catch {
+  } catch (error) {
     return {
       model: MODEL_DEFAULTS.deep,
       data: fallback,
       mermaidText: diagramToMermaid(fallback.diagram),
       markdown: buildArtifactMarkdown("FOLDER", fallback),
-      metadata: buildMetadata("fallback", "low")
+      metadata: buildMetadata("fallback", "low", describeFallback(error))
     };
   }
 }
@@ -574,6 +610,7 @@ export async function analyzeFile(context: FileAnalysisContext): Promise<Analysi
       mermaidText: diagramToMermaid(fallback.diagram),
       markdown: buildArtifactMarkdown("FILE", fallback),
       metadata: buildMetadata("fallback", highComplexity ? "medium" : "low", {
+        ...describeFallback(),
         sourceLanguage: context.language,
         sourcePreviewHtml: context.sourcePreviewHtml
       }),
@@ -624,13 +661,14 @@ export async function analyzeFile(context: FileAnalysisContext): Promise<Analysi
       }),
       sourceExcerpt: context.excerpt
     };
-  } catch {
+  } catch (error) {
     return {
       model: selectedModel,
       data: fallback,
       mermaidText: diagramToMermaid(fallback.diagram),
       markdown: buildArtifactMarkdown("FILE", fallback),
       metadata: buildMetadata("fallback", highComplexity ? "medium" : "low", {
+        ...describeFallback(error),
         sourceLanguage: context.language,
         sourcePreviewHtml: context.sourcePreviewHtml
       }),
@@ -648,7 +686,7 @@ export async function analyzeHistory(commits: CommitSummary[]): Promise<Analysis
       data: fallback,
       mermaidText: diagramToMermaid(graphFromPaths(fallback.hotspots.map((item) => item.path), "history")),
       markdown: buildArtifactMarkdown("HISTORY", fallback),
-      metadata: buildMetadata("fallback", "low")
+      metadata: buildMetadata("fallback", "low", describeFallback())
     };
   }
 
@@ -678,13 +716,13 @@ export async function analyzeHistory(commits: CommitSummary[]): Promise<Analysis
       markdown: buildArtifactMarkdown("HISTORY", data),
       metadata: buildMetadata("openai", reasoningEffort)
     };
-  } catch {
+  } catch (error) {
     return {
       model: MODEL_DEFAULTS.deep,
       data: fallback,
       mermaidText: diagramToMermaid(graphFromPaths(fallback.hotspots.map((item) => item.path), "history")),
       markdown: buildArtifactMarkdown("HISTORY", fallback),
-      metadata: buildMetadata("fallback", "low")
+      metadata: buildMetadata("fallback", "low", describeFallback(error))
     };
   }
 }

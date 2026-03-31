@@ -61,6 +61,8 @@ function normalizeArtifactMetadata(raw: unknown): ArtifactMetadata | null {
     promptVersion: typeof metadata.promptVersion === "string" ? metadata.promptVersion : "legacy",
     reasoningEffort: typeof metadata.reasoningEffort === "string" ? metadata.reasoningEffort : undefined,
     coverageMode: metadata.coverageMode === "precomputed" || metadata.coverageMode === "on-demand" ? metadata.coverageMode : undefined,
+    fallbackReason: typeof metadata.fallbackReason === "string" ? metadata.fallbackReason : undefined,
+    fallbackMessage: typeof metadata.fallbackMessage === "string" ? metadata.fallbackMessage : undefined,
     sourceLanguage: typeof metadata.sourceLanguage === "string" ? metadata.sourceLanguage : undefined,
     sourcePreviewHtml: typeof metadata.sourcePreviewHtml === "string" ? metadata.sourcePreviewHtml : undefined,
     mermaidText: typeof metadata.mermaidText === "string" ? metadata.mermaidText : undefined
@@ -96,6 +98,8 @@ export function serializeRepository(
     latestAnalysisProvider: latestMetadata?.provider || null,
     latestAnalysisModel: latestRepoArtifact?.model || null,
     latestAnalysisUpdatedAt: latestRepoArtifact?.updatedAt.toISOString() || null,
+    latestAnalysisReason: latestMetadata?.fallbackReason || null,
+    latestAnalysisMessage: latestMetadata?.fallbackMessage || null,
     hasLiveAnalysis: latestMetadata?.provider === "openai",
     category: repository.category ? serializeCategory(repository.category) : null
   };

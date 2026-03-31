@@ -16,6 +16,27 @@ function collectPaths(tree: TreeNodePayload[], type: "directory" | "file") {
   ]);
 }
 
+function describeFallbackReason(reason?: string | null) {
+  switch (reason) {
+    case "quota_exceeded":
+      return "OpenAI quota가 초과되어 fallback 분석으로 전환되었습니다.";
+    case "rate_limited":
+      return "OpenAI rate limit에 걸려 fallback 분석으로 전환되었습니다.";
+    case "invalid_api_key":
+      return "OpenAI API key가 유효하지 않아 fallback 분석으로 전환되었습니다.";
+    case "missing_api_key":
+      return "OpenAI API key가 설정되지 않아 fallback 분석으로 전환되었습니다.";
+    case "structured_output_error":
+      return "Structured output 파싱 실패로 fallback 분석으로 전환되었습니다.";
+    case "model_refusal":
+      return "모델이 응답을 거절해 fallback 분석으로 전환되었습니다.";
+    case "api_error":
+      return "OpenAI API 오류로 fallback 분석으로 전환되었습니다.";
+    default:
+      return null;
+  }
+}
+
 export function DetailShell({
   initialRepository,
   initialTree,
@@ -172,6 +193,8 @@ export function DetailShell({
   const currentCommit = artifact?.commitSha || repository.headCommitSha || "pending";
   const currentUpdatedAt = artifact?.updatedAt || repository.latestAnalysisUpdatedAt || repository.lastAnalyzedAt;
   const currentCoverageMode = currentMetadata?.coverageMode || (panelScope === "folder" || panelScope === "file" ? "on-demand" : "precomputed");
+  const currentFallbackReason = currentMetadata?.fallbackReason || repository.latestAnalysisReason;
+  const currentFallbackMessage = currentMetadata?.fallbackMessage || repository.latestAnalysisMessage;
 
   return (
     <main className="mx-auto max-w-[1500px] px-6 py-8 md:px-8">
@@ -238,6 +261,12 @@ export function DetailShell({
                 {repository.latestAnalysisModel ? <Badge>{repository.latestAnalysisModel}</Badge> : null}
               </div>
               <p>{repository.quickSummary || "Quick summary가 아직 준비되지 않았습니다."}</p>
+              {!repository.hasLiveAnalysis && repository.latestAnalysisReason ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+                  {describeFallbackReason(repository.latestAnalysisReason)}
+                  {repository.latestAnalysisMessage ? <div className="mt-1 text-amber-700/90">{repository.latestAnalysisMessage}</div> : null}
+                </div>
+              ) : null}
               <div className="h-2 overflow-hidden rounded-full bg-slate-200/70">
                 <div className="h-full rounded-full bg-gradient-to-r from-accent to-accentWarm" style={{ width: `${repository.importProgress}%` }} />
               </div>
@@ -279,6 +308,12 @@ export function DetailShell({
               <div>Coverage: <strong>{currentCoverageMode}</strong></div>
               <div>Commit: <strong>{currentCommit.slice(0, 8)}</strong></div>
               <div>Last analyzed: <strong>{currentUpdatedAt ? new Date(currentUpdatedAt).toLocaleString("ko-KR") : "pending"}</strong></div>
+              {!repository.hasLiveAnalysis && currentFallbackReason ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+                  {describeFallbackReason(currentFallbackReason)}
+                  {currentFallbackMessage ? <div className="mt-1 text-amber-700/90">{currentFallbackMessage}</div> : null}
+                </div>
+              ) : null}
             </div>
           </Card>
 

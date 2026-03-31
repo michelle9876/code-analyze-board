@@ -12,6 +12,27 @@ function statusTone(status: string) {
   return "bg-accent/10 text-accent border-accent/20";
 }
 
+function describeFallbackReason(reason: string | null) {
+  switch (reason) {
+    case "quota_exceeded":
+      return "OpenAI quota 초과";
+    case "rate_limited":
+      return "OpenAI rate limit";
+    case "invalid_api_key":
+      return "API key 확인 필요";
+    case "missing_api_key":
+      return "API key 없음";
+    case "structured_output_error":
+      return "Structured output parse 실패";
+    case "model_refusal":
+      return "모델 응답 거절";
+    case "api_error":
+      return "OpenAI API 오류";
+    default:
+      return null;
+  }
+}
+
 export function RepoCard({ repo }: { repo: RepositoryListItem }) {
   const analysisTimestamp = repo.latestAnalysisUpdatedAt || repo.lastAnalyzedAt;
   const providerLabel =
@@ -63,6 +84,12 @@ export function RepoCard({ repo }: { repo: RepositoryListItem }) {
             </Badge>
           ))}
         </div>
+
+        {!repo.hasLiveAnalysis && repo.latestAnalysisReason ? (
+          <div className="mb-4 text-xs font-medium text-amber-700">
+            Fallback reason: {describeFallbackReason(repo.latestAnalysisReason) || repo.latestAnalysisReason}
+          </div>
+        ) : null}
 
         <div className="mt-auto flex items-center justify-between text-sm text-slate-500">
           <span>{analysisTimestamp ? `${formatDistanceToNowStrict(new Date(analysisTimestamp))} ago` : "분석 대기 중"}</span>
