@@ -1,10 +1,23 @@
+import { loadEnvConfig } from "@next/env";
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 
 let cachedClient: OpenAI | null | undefined;
 
+function ensureOpenAIEnvLoaded() {
+  if (!process.env.OPENAI_API_KEY) {
+    if (process.env.OPENAI_API_KEY === "") {
+      delete process.env.OPENAI_API_KEY;
+    }
+
+    loadEnvConfig(process.cwd());
+  }
+}
+
 export function getOpenAIClient() {
+  ensureOpenAIEnvLoaded();
+
   if (cachedClient !== undefined) {
     return cachedClient;
   }
