@@ -57,6 +57,8 @@ export function AnalysisPanel({
   const readingOrder = [...(Array.isArray(data.recommendedReadingOrder) ? data.recommendedReadingOrder : []), ...(Array.isArray(data.readingOrder) ? data.readingOrder : [])];
   const entrypoints = Array.isArray(data.entrypoints) ? data.entrypoints : [];
   const logicFlows = Array.isArray(data.logicFlows) ? data.logicFlows : [];
+  const primaryPipelines = logicFlows.slice(0, 2);
+  const secondaryPipelines = logicFlows.slice(2, 4);
   const evidenceCards = Array.isArray(data.evidenceCards) ? data.evidenceCards : [];
   const declaredSymbols = Array.isArray(data.declaredSymbols) ? data.declaredSymbols : [];
   const callers = Array.isArray(data.callers) ? data.callers : [];
@@ -167,12 +169,28 @@ export function AnalysisPanel({
           </div>
           {logicFlows.length ? (
             <div className="space-y-4">
-              {logicFlows.map((flow: any) => (
-                <div key={flow.title} className="rounded-[1.25rem] border border-line bg-white/70 p-4">
-                  <div className="mb-2 font-medium text-ink">{flow.title}</div>
-                  <BulletList items={flow.steps} />
+              {primaryPipelines.length ? (
+                <div className="space-y-3">
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Primary pipeline</div>
+                  {primaryPipelines.map((flow: any) => (
+                    <div key={flow.title} className="rounded-[1.25rem] border border-sky-200/70 bg-sky-50/70 p-4">
+                      <div className="mb-2 font-medium text-ink">{flow.title}</div>
+                      <BulletList items={flow.steps} />
+                    </div>
+                  ))}
                 </div>
-              ))}
+              ) : null}
+              {secondaryPipelines.length ? (
+                <div className="space-y-3">
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Secondary pipeline</div>
+                  {secondaryPipelines.map((flow: any) => (
+                    <div key={flow.title} className="rounded-[1.25rem] border border-line bg-white/70 p-4">
+                      <div className="mb-2 font-medium text-ink">{flow.title}</div>
+                      <BulletList items={flow.steps} />
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : data.keyFlows?.length ? (
             <div className="space-y-4">
