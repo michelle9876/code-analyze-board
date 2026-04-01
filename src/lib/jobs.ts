@@ -8,6 +8,7 @@ import {
   analyzeRepository,
   buildArtifactMarkdown
 } from "@/lib/analysis";
+import { loadOrBuildRepositoryFacts } from "@/lib/code-facts";
 import {
   ensureRepositoryClone,
   getHeadCommitSha,
@@ -460,7 +461,13 @@ async function handleAnalyzeRepoJob(job: AnalysisJob) {
     buildRepositorySnapshot(repository.clonePath),
     readRecentCommits(repository.clonePath)
   ]);
-  const result = await analyzeRepository(snapshot, recentCommits);
+  const facts = await loadOrBuildRepositoryFacts({
+    repositoryId: repository.id,
+    commitSha,
+    rootPath: repository.clonePath,
+    snapshot
+  });
+  const result = await analyzeRepository(snapshot, recentCommits, facts);
 
   await persistArtifact(repository.id, "REPO", "", commitSha, {
     ...result,
@@ -541,7 +548,12 @@ async function handleAnalyzeFileJob(job: AnalysisJob) {
 
   const commits = await readPathCommits(repository.clonePath, job.path);
   const context = await buildFileAnalysisContext(repository.clonePath, job.path, commits);
-  const result = await analyzeFile(context);
+  const facts = await loadOrBuildRepositoryFacts({
+    repositoryId: repository.id,
+    commitSha,
+    rootPath: repository.clonePath
+  });
+  const result = await analyzeFile(context, facts);
   await persistArtifact(repository.id, "FILE", job.path, commitSha, {
     ...result,
     metadata: withJobMetadata(job, result.metadata)

@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
-function collectPaths(tree: TreeNodePayload[], type: "directory" | "file") {
+function collectPaths(tree: TreeNodePayload[], type: "directory" | "file"): string[] {
   return tree.flatMap((node) => [
     ...(node.type === type ? [node.path] : []),
     ...(node.children ? collectPaths(node.children, type) : [])

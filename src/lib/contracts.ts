@@ -17,8 +17,8 @@ export const diagramEdgeSchema = z.object({
 });
 
 export const diagramGraphSchema = z.object({
-  nodes: z.array(diagramNodeSchema).max(8),
-  edges: z.array(diagramEdgeSchema).max(12)
+  nodes: z.array(diagramNodeSchema).max(12),
+  edges: z.array(diagramEdgeSchema).max(18)
 });
 
 export const artifactMetadataSchema = z.object({
@@ -26,11 +26,47 @@ export const artifactMetadataSchema = z.object({
   promptVersion: z.string(),
   reasoningEffort: z.string().optional(),
   coverageMode: z.enum(["precomputed", "on-demand"]).optional(),
+  analysisMode: z.enum(["heuristic", "fact-backed"]).optional(),
+  factLanguages: z.array(z.string()).max(6).optional(),
+  factCacheKey: z.string().optional(),
   fallbackReason: z.string().optional(),
   fallbackMessage: z.string().optional(),
   sourceLanguage: z.string().optional(),
   sourcePreviewHtml: z.string().optional(),
   mermaidText: z.string().optional()
+});
+
+export const evidenceCardSchema = z.object({
+  title: z.string(),
+  path: z.string(),
+  symbol: z.string().optional(),
+  kind: z.enum(["entrypoint", "handler", "service", "external call", "state", "config"]),
+  evidence: z.string(),
+  whyItMatters: z.string()
+});
+
+export const entrypointSchema = z.object({
+  path: z.string(),
+  kind: z.string(),
+  symbol: z.string().optional(),
+  why: z.string()
+});
+
+export const logicFlowSchema = z.object({
+  title: z.string(),
+  steps: z.array(z.string()).max(5)
+});
+
+export const moduleGraphSummarySchema = z.object({
+  summary: z.string(),
+  highFanOutModules: z.array(z.string()).max(5),
+  externalSystems: z.array(z.string()).max(5),
+  configSurfaces: z.array(z.string()).max(5)
+});
+
+export const codeSymbolSchema = z.object({
+  name: z.string(),
+  kind: z.string()
 });
 
 export const quickScanSchema = z.object({
@@ -55,6 +91,10 @@ export const quickScanSchema = z.object({
 export const repoAnalysisSchema = z.object({
   summary: z.string(),
   architectureOverview: z.string(),
+  entrypoints: z.array(entrypointSchema).max(6),
+  logicFlows: z.array(logicFlowSchema).max(4),
+  evidenceCards: z.array(evidenceCardSchema).max(8),
+  moduleGraphSummary: moduleGraphSummarySchema,
   majorSubsystems: z.array(
     z.object({
       name: z.string(),
@@ -127,6 +167,11 @@ export const fileAnalysisSchema = z.object({
   summary: z.string(),
   purpose: z.string(),
   architectureRole: z.string(),
+  frameworkRole: z.string(),
+  declaredSymbols: z.array(codeSymbolSchema).max(8),
+  callers: z.array(z.string()).max(6),
+  callees: z.array(z.string()).max(6),
+  evidenceCards: z.array(evidenceCardSchema).max(8),
   inputsOutputs: z.array(z.string()).max(5),
   controlFlow: z.array(z.string()).max(4),
   callSequence: z.array(z.string()).max(5),

@@ -55,6 +55,14 @@ export function AnalysisPanel({
   const updatedAt = new Date(artifact.updatedAt).toLocaleString("ko-KR");
   const stackItems = Array.isArray(data.stack) ? data.stack : [];
   const readingOrder = [...(Array.isArray(data.recommendedReadingOrder) ? data.recommendedReadingOrder : []), ...(Array.isArray(data.readingOrder) ? data.readingOrder : [])];
+  const entrypoints = Array.isArray(data.entrypoints) ? data.entrypoints : [];
+  const logicFlows = Array.isArray(data.logicFlows) ? data.logicFlows : [];
+  const evidenceCards = Array.isArray(data.evidenceCards) ? data.evidenceCards : [];
+  const declaredSymbols = Array.isArray(data.declaredSymbols) ? data.declaredSymbols : [];
+  const callers = Array.isArray(data.callers) ? data.callers : [];
+  const callees = Array.isArray(data.callees) ? data.callees : [];
+  const moduleGraphSummary = data.moduleGraphSummary && typeof data.moduleGraphSummary === "object" ? data.moduleGraphSummary : null;
+  const executionRole = typeof data.frameworkRole === "string" ? data.frameworkRole : typeof data.architectureRole === "string" ? data.architectureRole : null;
   const dependencyUp = Array.isArray(data.upstreamDependencies) ? data.upstreamDependencies : Array.isArray(data.inboundDependencies) ? data.inboundDependencies : [];
   const dependencyDown = Array.isArray(data.downstreamDependencies) ? data.downstreamDependencies : Array.isArray(data.outboundDependencies) ? data.outboundDependencies : [];
   const designTradeoffs = Array.isArray(data.designTradeoffs) ? data.designTradeoffs : [];
@@ -116,6 +124,24 @@ export function AnalysisPanel({
         </Card>
       ) : null}
 
+      {entrypoints.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <Route className="h-4 w-4 text-accent" />
+            Entry points
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {entrypoints.map((item: any) => (
+              <div key={`${item.path}-${item.kind}`} className="rounded-[1.25rem] border border-line bg-white/75 p-4">
+                <div className="mb-1 font-medium text-ink">{item.path}</div>
+                <div className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">{item.kind}</div>
+                <p className="text-sm text-slate-700">{item.why}</p>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
       {data.majorSubsystems?.length ? (
         <Card className="rounded-[2rem] p-6">
           <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
@@ -133,13 +159,22 @@ export function AnalysisPanel({
         </Card>
       ) : null}
 
-      {data.keyFlows?.length || data.controlFlow?.length ? (
+      {logicFlows.length || data.keyFlows?.length || data.controlFlow?.length ? (
         <Card className="rounded-[2rem] p-6">
           <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
             <Route className="h-4 w-4 text-accentWarm" />
             Flow understanding
           </div>
-          {data.keyFlows?.length ? (
+          {logicFlows.length ? (
+            <div className="space-y-4">
+              {logicFlows.map((flow: any) => (
+                <div key={flow.title} className="rounded-[1.25rem] border border-line bg-white/70 p-4">
+                  <div className="mb-2 font-medium text-ink">{flow.title}</div>
+                  <BulletList items={flow.steps} />
+                </div>
+              ))}
+            </div>
+          ) : data.keyFlows?.length ? (
             <div className="space-y-4">
               {data.keyFlows.map((flow: any) => (
                 <div key={flow.title} className="rounded-[1.25rem] border border-line bg-white/70 p-4">
@@ -150,6 +185,36 @@ export function AnalysisPanel({
             </div>
           ) : null}
           {data.controlFlow?.length ? <BulletList items={data.controlFlow} /> : null}
+        </Card>
+      ) : null}
+
+      {moduleGraphSummary ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <Network className="h-4 w-4 text-accent" />
+            Why this repo is structured this way
+          </div>
+          <p className="text-sm leading-7 text-slate-700">{moduleGraphSummary.summary}</p>
+          <div className="mt-5 grid gap-5 md:grid-cols-3">
+            {moduleGraphSummary.highFanOutModules?.length ? (
+              <div>
+                <div className="mb-3 text-xs uppercase tracking-[0.2em] text-slate-500">High fan-out modules</div>
+                <BulletList items={moduleGraphSummary.highFanOutModules} />
+              </div>
+            ) : null}
+            {moduleGraphSummary.externalSystems?.length ? (
+              <div>
+                <div className="mb-3 text-xs uppercase tracking-[0.2em] text-slate-500">External systems</div>
+                <BulletList items={moduleGraphSummary.externalSystems} />
+              </div>
+            ) : null}
+            {moduleGraphSummary.configSurfaces?.length ? (
+              <div>
+                <div className="mb-3 text-xs uppercase tracking-[0.2em] text-slate-500">Config surfaces</div>
+                <BulletList items={moduleGraphSummary.configSurfaces} />
+              </div>
+            ) : null}
+          </div>
         </Card>
       ) : null}
 
@@ -207,6 +272,40 @@ export function AnalysisPanel({
         </Card>
       ) : null}
 
+      {executionRole || callers.length || callees.length || declaredSymbols.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <Network className="h-4 w-4 text-accentWarm" />
+            Execution role
+          </div>
+          {executionRole ? <p className="mb-5 text-sm leading-7 text-slate-700">{executionRole}</p> : null}
+          <div className="grid gap-5 md:grid-cols-2">
+            {callers.length ? (
+              <div>
+                <div className="mb-3 text-xs uppercase tracking-[0.2em] text-slate-500">Called by</div>
+                <BulletList items={callers} />
+              </div>
+            ) : null}
+            {callees.length ? (
+              <div>
+                <div className="mb-3 text-xs uppercase tracking-[0.2em] text-slate-500">Calls out</div>
+                <BulletList items={callees} />
+              </div>
+            ) : null}
+          </div>
+          {declaredSymbols.length ? (
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              {declaredSymbols.map((symbol: any) => (
+                <div key={`${symbol.kind}-${symbol.name}`} className="rounded-[1.25rem] border border-line bg-white/75 p-4">
+                  <div className="mb-1 font-medium text-ink">{symbol.name}</div>
+                  <p className="text-sm text-slate-700">{symbol.kind}</p>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
+
       {artifact.metadata && typeof artifact.metadata.sourcePreviewHtml === "string" ? (
         <Card className="rounded-[2rem] p-6">
           <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
@@ -214,6 +313,26 @@ export function AnalysisPanel({
             Source preview
           </div>
           <div dangerouslySetInnerHTML={{ __html: artifact.metadata.sourcePreviewHtml }} />
+        </Card>
+      ) : null}
+
+      {evidenceCards.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <Lightbulb className="h-4 w-4 text-warning" />
+            Evidence cards
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {evidenceCards.map((item: any, index: number) => (
+              <div key={`${item.path}-${item.symbol || index}`} className="rounded-[1.25rem] border border-line bg-white/75 p-4">
+                <div className="mb-1 font-medium text-ink">{item.title}</div>
+                <div className="mb-1 text-xs uppercase tracking-[0.18em] text-slate-500">{item.kind}</div>
+                <div className="mb-2 text-sm text-slate-700">{item.path}{item.symbol ? ` · ${item.symbol}` : ""}</div>
+                <p className="text-sm leading-6 text-slate-700">{item.evidence}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-700"><strong>Why it matters:</strong> {item.whyItMatters}</p>
+              </div>
+            ))}
+          </div>
         </Card>
       ) : null}
 

@@ -61,6 +61,11 @@ function normalizeArtifactMetadata(raw: unknown): ArtifactMetadata | null {
     promptVersion: typeof metadata.promptVersion === "string" ? metadata.promptVersion : "legacy",
     reasoningEffort: typeof metadata.reasoningEffort === "string" ? metadata.reasoningEffort : undefined,
     coverageMode: metadata.coverageMode === "precomputed" || metadata.coverageMode === "on-demand" ? metadata.coverageMode : undefined,
+    analysisMode: metadata.analysisMode === "heuristic" || metadata.analysisMode === "fact-backed" ? metadata.analysisMode : undefined,
+    factLanguages: Array.isArray(metadata.factLanguages)
+      ? metadata.factLanguages.filter((value): value is string => typeof value === "string").slice(0, 6)
+      : undefined,
+    factCacheKey: typeof metadata.factCacheKey === "string" ? metadata.factCacheKey : undefined,
     fallbackReason: typeof metadata.fallbackReason === "string" ? metadata.fallbackReason : undefined,
     fallbackMessage: typeof metadata.fallbackMessage === "string" ? metadata.fallbackMessage : undefined,
     sourceLanguage: typeof metadata.sourceLanguage === "string" ? metadata.sourceLanguage : undefined,
@@ -116,7 +121,7 @@ export function serializeArtifact(artifact: AnalysisArtifact): ArtifactEnvelope 
     status: artifact.status,
     summary: artifact.summary,
     markdown: artifact.markdown,
-    data: safeJsonParse(artifact.dataJson, {}),
+    data: safeJsonParse<ArtifactEnvelope["data"]>(artifact.dataJson, {} as ArtifactEnvelope["data"]),
     mermaidText: metadata?.mermaidText || null,
     updatedAt: artifact.updatedAt.toISOString(),
     commitSha: artifact.commitSha,
