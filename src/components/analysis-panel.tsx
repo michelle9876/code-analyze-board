@@ -63,12 +63,58 @@ export function AnalysisPanel({
   const declaredSymbols = Array.isArray(data.declaredSymbols) ? data.declaredSymbols : [];
   const callers = Array.isArray(data.callers) ? data.callers : [];
   const callees = Array.isArray(data.callees) ? data.callees : [];
+  const callSequence = Array.isArray(data.callSequence) ? data.callSequence : [];
   const moduleGraphSummary = data.moduleGraphSummary && typeof data.moduleGraphSummary === "object" ? data.moduleGraphSummary : null;
   const executionRole = typeof data.frameworkRole === "string" ? data.frameworkRole : typeof data.architectureRole === "string" ? data.architectureRole : null;
   const dependencyUp = Array.isArray(data.upstreamDependencies) ? data.upstreamDependencies : Array.isArray(data.inboundDependencies) ? data.inboundDependencies : [];
   const dependencyDown = Array.isArray(data.downstreamDependencies) ? data.downstreamDependencies : Array.isArray(data.outboundDependencies) ? data.outboundDependencies : [];
   const designTradeoffs = Array.isArray(data.designTradeoffs) ? data.designTradeoffs : [];
   const keySymbols = Array.isArray(data.keySymbols) ? data.keySymbols : [];
+  const miniFlowCards =
+    scope === "file"
+      ? [
+          callers[0]
+            ? {
+                title: "Entry trigger",
+                detail: callers[0],
+                note: "이 파일의 실행이 어디서 시작되는지 보여줍니다."
+              }
+            : callSequence[0]
+              ? {
+                  title: "Entry trigger",
+                  detail: callSequence[0],
+                  note: "이 파일이 실행 흐름에 들어오는 첫 지점입니다."
+                }
+              : null,
+          keySymbols[0] || declaredSymbols[0]
+            ? {
+                title: `Key symbol: ${(keySymbols[0]?.name || declaredSymbols[0]?.name) as string}`,
+                detail: callSequence[1] || keySymbols[0]?.role || declaredSymbols[0]?.kind || "핵심 심볼부터 파일 책임을 따라갈 수 있습니다.",
+                note: "먼저 읽어야 할 함수나 심볼을 가리킵니다."
+              }
+            : null,
+          callees[0]
+            ? {
+                title: "Core handoff",
+                detail: callees[0],
+                note: "이 파일이 다음 단계로 어떤 함수나 경계에 일을 넘기는지 보여줍니다."
+              }
+            : callSequence[2]
+              ? {
+                  title: "Core handoff",
+                  detail: callSequence[2],
+                  note: "실행이 다음 단계로 넘어가는 핵심 연결입니다."
+                }
+              : null,
+          callees[1] || data.dependencyNotes?.[0] || callSequence[3]
+            ? {
+                title: "Boundary / outcome",
+                detail: (callees[1] || data.dependencyNotes?.[0] || callSequence[3]) as string,
+                note: "외부 API, 데이터 계층, 설정 경계로 이어지는 마지막 단서를 보여줍니다."
+              }
+            : null
+        ].filter(Boolean)
+      : [];
   const importantPaths = [
     ...(Array.isArray(data.importantChildren) ? data.importantChildren.map((item: any) => item.path) : []),
     ...(Array.isArray(data.relatedFiles) ? data.relatedFiles : []),
@@ -321,6 +367,27 @@ export function AnalysisPanel({
               ))}
             </div>
           ) : null}
+        </Card>
+      ) : null}
+
+      {miniFlowCards.length ? (
+        <Card className="rounded-[2rem] p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
+            <Route className="h-4 w-4 text-accentWarm" />
+            Key function mini flow
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {miniFlowCards.map((item: any, index: number) => (
+              <div key={`${item.title}-${index}`} className="rounded-[1.25rem] border border-line bg-white/75 p-4">
+                <div className="mb-2 inline-flex rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold tracking-[0.16em] text-slate-500">
+                  {String(index + 1).padStart(2, "0")}
+                </div>
+                <div className="mb-2 font-medium text-ink">{item.title}</div>
+                <p className="mb-2 text-sm leading-7 text-slate-700">{item.detail}</p>
+                <p className="text-xs leading-6 text-slate-500">{item.note}</p>
+              </div>
+            ))}
+          </div>
         </Card>
       ) : null}
 
