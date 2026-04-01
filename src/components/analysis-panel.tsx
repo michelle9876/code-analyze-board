@@ -59,6 +59,8 @@ export function AnalysisPanel({
   const logicFlows = Array.isArray(data.logicFlows) ? data.logicFlows : [];
   const primaryPipelines = logicFlows.slice(0, 2);
   const secondaryPipelines = logicFlows.slice(2, 4);
+  const heroPipeline = scope === "repo" ? primaryPipelines[0] || logicFlows[0] || null : null;
+  const heroEntrypoint = scope === "repo" ? entrypoints[0] || null : null;
   const evidenceCards = Array.isArray(data.evidenceCards) ? data.evidenceCards : [];
   const declaredSymbols = Array.isArray(data.declaredSymbols) ? data.declaredSymbols : [];
   const callers = Array.isArray(data.callers) ? data.callers : [];
@@ -154,6 +156,37 @@ export function AnalysisPanel({
           </div>
         </div>
       </Card>
+
+      {heroPipeline ? (
+        <Card className="overflow-hidden rounded-[2rem] border border-sky-200/80 bg-[radial-gradient(circle_at_top_left,rgba(224,242,254,0.95),rgba(255,255,255,0.98)_52%),linear-gradient(135deg,rgba(255,255,255,0.98),rgba(240,249,255,0.94))] p-6">
+          <div className="mb-4 flex items-start justify-between gap-4">
+            <div>
+              <div className="mb-2 inline-flex rounded-full border border-sky-200 bg-white/80 px-3 py-1 text-[10px] font-semibold tracking-[0.18em] text-sky-700">
+                PRIMARY PIPELINE
+              </div>
+              <div className="text-xl font-semibold tracking-tight text-slate-900">{heroPipeline.title}</div>
+            </div>
+            {heroEntrypoint ? (
+              <div className="rounded-[1.25rem] border border-white/80 bg-white/75 px-4 py-3 text-right shadow-[0_12px_24px_rgba(14,116,144,0.08)]">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Lead entrypoint</div>
+                <div className="mt-1 text-sm font-medium text-slate-900">{heroEntrypoint.path}</div>
+                {heroEntrypoint.symbol ? <div className="mt-1 text-xs text-slate-600">{heroEntrypoint.symbol}</div> : null}
+              </div>
+            ) : null}
+          </div>
+          <div className="grid gap-3 md:grid-cols-4">
+            {heroPipeline.steps.map((step: string, index: number) => (
+              <div key={`${heroPipeline.title}-${index}`} className="rounded-[1.25rem] border border-white/80 bg-white/85 p-4 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
+                <div className="mb-2 inline-flex rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold tracking-[0.16em] text-slate-500">
+                  STEP {index + 1}
+                </div>
+                <div className="text-sm font-medium leading-6 text-slate-900">{step}</div>
+              </div>
+            ))}
+          </div>
+          {heroEntrypoint?.why ? <p className="mt-5 text-sm leading-7 text-slate-700">{heroEntrypoint.why}</p> : null}
+        </Card>
+      ) : null}
 
       {stackItems.length ? (
         <Card className="rounded-[2rem] p-6">
