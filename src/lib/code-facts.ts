@@ -9,7 +9,7 @@ import { truncate, uniqueStrings } from "@/lib/utils";
 
 const execFileAsync = promisify(execFile);
 
-const FACTS_VERSION = "v6";
+const FACTS_VERSION = "v7";
 const MAX_FACT_FILE_BYTES = 180_000;
 const MAX_FACT_FILES = 220;
 const IGNORED_DIRECTORIES = new Set([
@@ -248,6 +248,20 @@ function lastSymbolSegment(name: string) {
   return name.split(".").filter(Boolean).pop() || name;
 }
 
+function fileStemTokens(relativePath: string) {
+  return baseName(relativePath)
+    .replace(/\.[^.]+$/, "")
+    .split(/[^a-zA-Z0-9]+/)
+    .map((token) => token.toLowerCase())
+    .filter((token) => token.length >= 4);
+}
+
+function isExternalishCallName(name: string) {
+  return /fetch|axios|request|client|redis|prisma|query|publish|send|enqueue|cache|db|sql|response\.(json|text)|json\.load|sys\.exit|re\.search|console\.(log|error|warn)/i.test(
+    name
+  );
+}
+
 function formatSymbolLabel(symbol: string) {
   if (symbol === "<module>") return "module bootstrap";
   return symbol.includes("(") ? symbol : `${symbol}()`;
@@ -291,13 +305,55 @@ function buildDeveloperCallees(fact: FileCodeFacts) {
 }
 
 function buildLocalCallFlowSteps(fact: FileCodeFacts) {
-  const flowEdges = fact.entrySymbol
-    ? fact.localCallEdges.filter((edge) => edge.caller === fact.entrySymbol || edge.callee === fact.entrySymbol)
-    : fact.localCallEdges;
-
-  return uniqueStrings(
-    flowEdges.slice(0, 3).map((edge) => `${formatSymbolLabel(edge.caller)} -> ${formatSymbolLabel(edge.callee)}`)
+  const localSymbolSet = new Set(
+    uniqueStrings([
+      ...fact.declaredSymbols.map((symbol) => symbol.name),
+      ...fact.exportedSymbols.map((symbol) => symbol.name)
+    ]).map((name) => lastSymbolSegment(name))
   );
+  const edgesByCaller = new Map<string, LocalCallEdge[]>();
+
+  for (const edge of fact.localCallEdges) {
+    const caller = lastSymbolSegment(edge.caller);
+    const existing = edgesByCaller.get(caller) || [];
+    existing.push(edge);
+    edgesByCaller.set(caller, existing);
+  }
+
+  const scoreEdge = (edge: LocalCallEdge) => {
+    const calleeBase = lastSymbolSegment(edge.callee);
+    return (
+      (localSymbolSet.has(calleeBase) ? 8 : 0) +
+      (isExternalishCallName(edge.callee) ? 6 : 0) +
+      (/validate|load|fetch|query|request|save|write|send|publish|enqueue|parse|compile|build|render|create|close|update|delete|run/i.test(calleeBase) ? 4 : 0) +
+      (edge.callee.includes(".") ? 1 : 0)
+    );
+  };
+
+  const visited = new Set<string>();
+  const steps: string[] = [];
+  let current = fact.entrySymbol || lastSymbolSegment(fact.localCallEdges[0]?.caller || "");
+
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    const candidates = (edgesByCaller.get(lastSymbolSegment(current)) || [])
+      .filter((edge) => !visited.has(`${edge.caller}->${edge.callee}`))
+      .sort((left, right) => scoreEdge(right) - scoreEdge(left));
+
+    const next = candidates[0];
+    if (!next) break;
+
+    steps.push(`${formatSymbolLabel(next.caller)} -> ${formatSymbolLabel(next.callee)}`);
+    visited.add(`${next.caller}->${next.callee}`);
+
+    const calleeBase = lastSymbolSegment(next.callee);
+    if (!localSymbolSet.has(calleeBase) || calleeBase === lastSymbolSegment(current)) {
+      break;
+    }
+
+    current = calleeBase;
+  }
+
+  return uniqueStrings(steps);
 }
 
 function chooseEntrypointSymbol(input: {
@@ -350,6 +406,12 @@ function chooseEntrypointSymbol(input: {
   }
 
   if (bootstrapTargets[0]) return bootstrapTargets[0];
+
+  const stemTokens = fileStemTokens(input.relativePath);
+  const byStemMatch = functionSymbols.find((name) =>
+    stemTokens.some((token) => name.toLowerCase().includes(token))
+  );
+  if (byStemMatch) return byStemMatch;
 
   const preferredByPath = [...functionSymbols, ...classSymbols].find((name) => input.relativePath.toLowerCase().includes(name.toLowerCase()));
   if (input.isEntrypoint && preferredByPath) return preferredByPath;
@@ -519,7 +581,7 @@ function analyzeJsTsFile(relativePath: string, content: string): RawFactResult {
   const internalCallEdges = uniqueCallEdges(
     localCallEdges.filter((edge) => {
       const calleeBase = lastSymbolSegment(edge.callee);
-      return edge.callee !== edge.caller && (localFunctionSymbols.has(calleeBase) || edge.callee.includes("."));
+      return edge.callee !== edge.caller && (localFunctionSymbols.has(calleeBase) || edge.callee.includes(".") || isExternalishCallName(edge.callee));
     })
   ).slice(0, 16);
   const entrySymbol = chooseEntrypointSymbol({
