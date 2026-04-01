@@ -9,7 +9,7 @@ import { truncate, uniqueStrings } from "@/lib/utils";
 
 const execFileAsync = promisify(execFile);
 
-const FACTS_VERSION = "v8";
+const FACTS_VERSION = "v9";
 const MAX_FACT_FILE_BYTES = 180_000;
 const MAX_FACT_FILES = 220;
 const IGNORED_DIRECTORIES = new Set([
@@ -979,10 +979,39 @@ function buildReadingOrder(entrypoints: CodeEntrypoint[], summary: ModuleGraphSu
   });
 }
 
+function inferDiagramKindFromFlowStep(step: string): DiagramGraph["nodes"][number]["kind"] {
+  const lower = step.toLowerCase();
+  if (lower.startsWith("config:") || /env|config/.test(lower)) return "config";
+  if (lower.startsWith("external:") || /fetch|request|response|json\.load|sys\.exit|redis|prisma|db|query|client/.test(lower)) return "external";
+  if (/\(\s*runtime entry\s*\)|\(\s*api handler\s*\)/i.test(step)) return "entry";
+  if (/\(\s*data access module\s*\)/i.test(step)) return "data";
+  if (/\(\s*ui/.test(lower)) return "ui";
+  if (/\(\s*service/.test(lower)) return "service";
+  if (step.includes("->")) return "service";
+  return "module";
+}
+
+function compactFlowStepLabel(step: string) {
+  if (/^[^()]+\s\([^)]+\)$/.test(step)) {
+    return step.replace(/\s+\([^)]+\)$/, "");
+  }
+
+  if (step.startsWith("external:")) {
+    return step.slice("external:".length);
+  }
+
+  if (step.startsWith("config:")) {
+    return step.slice("config:".length);
+  }
+
+  return step;
+}
+
 function buildRepoDiagram(
   entrypoints: CodeEntrypoint[],
   summary: ModuleGraphSummary,
-  factsByPath: Record<string, FileCodeFacts>
+  factsByPath: Record<string, FileCodeFacts>,
+  logicFlows: CodeLogicFlow[]
 ): DiagramGraph {
   const nodes: DiagramGraph["nodes"] = [];
   const edges: DiagramGraph["edges"] = [];
@@ -998,49 +1027,48 @@ function buildRepoDiagram(
     return id;
   };
 
-  const entryIds = new Map<string, string>();
-  for (const entrypoint of entrypoints.slice(0, 4)) {
-    const fact = factsByPath[entrypoint.path];
-    const id = pushNode(
-      entrypoint.path,
-      diagramKindForRole(entrypoint.path, fact?.frameworkRole || entrypoint.kind, true),
-      entrypoint.why
-    );
-    if (id) entryIds.set(entrypoint.path, id);
+  for (const flow of logicFlows.slice(0, 3)) {
+    let previousId: string | null = null;
+
+    for (const step of flow.steps.slice(0, 4)) {
+      const label = compactFlowStepLabel(step);
+      const id = pushNode(label, inferDiagramKindFromFlowStep(step), flow.title);
+      if (!id) {
+        const existing = nodes.find((node) => node.label === label)?.id || null;
+        if (previousId && existing && previousId !== existing) {
+          edges.push({ from: previousId, to: existing, label: "next" });
+        }
+        previousId = existing;
+        continue;
+      }
+
+      if (previousId) {
+        edges.push({ from: previousId, to: id, label: "next" });
+      }
+
+      previousId = id;
+    }
   }
 
-  for (const filePath of summary.highFanOutModules.slice(0, 4)) {
+  for (const filePath of summary.highFanOutModules.slice(0, 3)) {
     const fact = factsByPath[filePath];
-    const id = pushNode(
-      filePath,
-      diagramKindForRole(filePath, fact?.frameworkRole || "Module", fact?.isEntrypoint || false),
-      fact?.frameworkRole || "Module"
-    );
-    if (!id) continue;
-
-    const sourceEntrypoint = entrypoints.find((entrypoint) => factsByPath[entrypoint.path]?.moduleCallees.includes(filePath));
-    if (sourceEntrypoint && entryIds.has(sourceEntrypoint.path)) {
-      edges.push({ from: entryIds.get(sourceEntrypoint.path)!, to: id, label: "flows to" });
-    }
+    pushNode(filePath, diagramKindForRole(filePath, fact?.frameworkRole || "Module", fact?.isEntrypoint || false), fact?.frameworkRole || "Module");
   }
 
   for (const external of summary.externalSystems.slice(0, 3)) {
     const externalId = pushNode(external, "external", "External integration");
     if (!externalId) continue;
-    const source = Object.values(factsByPath).find((fact) => fact.externalCalls.includes(external));
-    if (source) {
-      const sourceId = [...nodes].find((node) => node.label === source.path)?.id;
-      if (sourceId) edges.push({ from: sourceId, to: externalId, label: "reaches" });
+    const sourceNode = [...nodes].find((node) => node.kind === "service" || node.kind === "module" || node.kind === "entry");
+    if (sourceNode) {
+      edges.push({ from: sourceNode.id, to: externalId, label: "reaches" });
     }
   }
 
   for (const configSurface of summary.configSurfaces.slice(0, 3)) {
     const configId = pushNode(configSurface, "config", "Configuration touch point");
     if (!configId) continue;
-    const target = Object.values(factsByPath).find((fact) => fact.path === configSurface);
-    const source = entrypoints.find((entrypoint) => factsByPath[entrypoint.path]?.moduleCallees.includes(configSurface));
-    const sourceId = source ? entryIds.get(source.path) : [...nodes].find((node) => node.label === target?.path)?.id;
-    if (sourceId) edges.push({ from: configId, to: sourceId, label: "configures" });
+    const targetNode = [...nodes].find((node) => node.kind === "entry" || node.kind === "service");
+    if (targetNode) edges.push({ from: configId, to: targetNode.id, label: "configures" });
   }
 
   return {
@@ -1305,7 +1333,7 @@ async function buildRepositoryFacts(
   const logicFlows = buildLogicFlows(entrypoints, factsByPath);
   const readingOrder = buildReadingOrder(entrypoints, moduleGraphSummary, factsByPath);
   const evidenceCards = buildRepoEvidenceCards(entrypoints, moduleGraphSummary, factsByPath);
-  const diagram = buildRepoDiagram(entrypoints, moduleGraphSummary, factsByPath);
+  const diagram = buildRepoDiagram(entrypoints, moduleGraphSummary, factsByPath, logicFlows);
   const factLanguages = uniqueStrings(Object.values(factsByPath).map((fact) => fact.language));
 
   return {
