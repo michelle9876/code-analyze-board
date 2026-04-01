@@ -9,7 +9,7 @@ import { truncate, uniqueStrings } from "@/lib/utils";
 
 const execFileAsync = promisify(execFile);
 
-const FACTS_VERSION = "v7";
+const FACTS_VERSION = "v8";
 const MAX_FACT_FILE_BYTES = 180_000;
 const MAX_FACT_FILES = 220;
 const IGNORED_DIRECTORIES = new Set([
@@ -422,6 +422,21 @@ function chooseEntrypointSymbol(input: {
   return undefined;
 }
 
+function prioritizeInternalCallEdges(edges: LocalCallEdge[], localFunctionSymbols: Set<string>) {
+  const score = (edge: LocalCallEdge) => {
+    const calleeBase = lastSymbolSegment(edge.callee);
+    return (
+      (edge.caller === "<module>" && localFunctionSymbols.has(calleeBase) ? 30 : 0) +
+      (localFunctionSymbols.has(calleeBase) ? 14 : 0) +
+      (isExternalishCallName(edge.callee) ? 8 : 0) +
+      (/main|run|start|bootstrap|handler|execute|init|load|fetch|query|request|save|send|publish|enqueue|parse|compile|build|close|update|delete/i.test(calleeBase) ? 5 : 0) +
+      (edge.callee.includes(".") ? 1 : 0)
+    );
+  };
+
+  return [...edges].sort((left, right) => score(right) - score(left));
+}
+
 function extractConfigTouches(content: string) {
   return uniqueStrings([
     ...Array.from(content.matchAll(/process\.env\.([A-Z0-9_]+)/g)).map((match) => `process.env.${match[1]}`),
@@ -578,11 +593,14 @@ function analyzeJsTsFile(relativePath: string, content: string): RawFactResult {
     isHandler;
 
   const frameworkRole = inferFrameworkRole(relativePath, exportedSymbols, localCalls, isEntrypoint, isHandler);
-  const internalCallEdges = uniqueCallEdges(
+  const internalCallEdges = prioritizeInternalCallEdges(
+    uniqueCallEdges(
     localCallEdges.filter((edge) => {
       const calleeBase = lastSymbolSegment(edge.callee);
       return edge.callee !== edge.caller && (localFunctionSymbols.has(calleeBase) || edge.callee.includes(".") || isExternalishCallName(edge.callee));
     })
+    ),
+    localFunctionSymbols
   ).slice(0, 16);
   const entrySymbol = chooseEntrypointSymbol({
     relativePath,
