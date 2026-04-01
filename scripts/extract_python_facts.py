@@ -41,6 +41,71 @@ def infer_framework_role(path_value: str, is_entrypoint: bool, is_handler: bool,
     return "Python module"
 
 
+class FactVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.imports: list[str] = []
+        self.declared_symbols: list[dict[str, str]] = []
+        self.exported_symbols: list[dict[str, str]] = []
+        self.local_calls: list[str] = []
+        self.local_call_edges: list[dict[str, str]] = []
+        self.decorators: list[str] = []
+        self.scope_stack: list[str] = []
+
+    def visit_Import(self, node: ast.Import) -> Any:
+        for alias in node.names:
+            self.imports.append(alias.name)
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> Any:
+        module = node.module or ""
+        prefix = "." * node.level
+        self.imports.append(f"{prefix}{module}" if module else prefix or "")
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
+        symbol = normalize_symbol(node.name, "function")
+        if symbol:
+            self.declared_symbols.append(symbol)
+            self.exported_symbols.append(symbol)
+        for decorator in node.decorator_list:
+            name = dotted_call_name(decorator)
+            if name:
+                self.decorators.append(name)
+        self.scope_stack.append(node.name)
+        self.generic_visit(node)
+        self.scope_stack.pop()
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
+        self.visit_FunctionDef(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> Any:
+        symbol = normalize_symbol(node.name, "class")
+        if symbol:
+            self.declared_symbols.append(symbol)
+            self.exported_symbols.append(symbol)
+        self.generic_visit(node)
+
+    def visit_Assign(self, node: ast.Assign) -> Any:
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                symbol = normalize_symbol(target.id, "variable")
+                if symbol:
+                    self.declared_symbols.append(symbol)
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> Any:
+        name = dotted_call_name(node.func)
+        if name:
+            self.local_calls.append(name)
+            self.local_call_edges.append(
+                {
+                    "caller": self.scope_stack[-1] if self.scope_stack else "<module>",
+                    "callee": name,
+                }
+            )
+        self.generic_visit(node)
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print("{}", end="")
@@ -60,44 +125,14 @@ def main() -> int:
         print("{}", end="")
         return 0
 
-    imports: list[str] = []
-    declared_symbols: list[dict[str, str]] = []
-    exported_symbols: list[dict[str, str]] = []
-    local_calls: list[str] = []
-    decorators: list[str] = []
+    visitor = FactVisitor()
+    visitor.visit(tree)
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                imports.append(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            module = node.module or ""
-            prefix = "." * node.level
-            imports.append(f"{prefix}{module}" if module else prefix or "")
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            symbol = normalize_symbol(node.name, "function")
-            if symbol:
-                declared_symbols.append(symbol)
-                exported_symbols.append(symbol)
-            for decorator in node.decorator_list:
-                name = dotted_call_name(decorator)
-                if name:
-                    decorators.append(name)
-        elif isinstance(node, ast.ClassDef):
-            symbol = normalize_symbol(node.name, "class")
-            if symbol:
-                declared_symbols.append(symbol)
-                exported_symbols.append(symbol)
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    symbol = normalize_symbol(target.id, "variable")
-                    if symbol:
-                        declared_symbols.append(symbol)
-        elif isinstance(node, ast.Call):
-            name = dotted_call_name(node.func)
-            if name:
-                local_calls.append(name)
+    declared_symbols = visitor.declared_symbols
+    exported_symbols = visitor.exported_symbols
+    local_calls = visitor.local_calls
+    decorators = visitor.decorators
+    local_call_edges = visitor.local_call_edges
 
     is_entrypoint = bool(re.search(r'if\s+__name__\s*==\s*["\']__main__["\']', content))
     is_handler = any(
@@ -118,17 +153,29 @@ def main() -> int:
         if re.search(r"requests|httpx|boto3|redis|sqlalchemy|subprocess|publish|send|enqueue", name, re.I):
             external_calls.append(name)
 
+    entry_symbol = None
+    if is_entrypoint and any(symbol["name"] == "main" for symbol in declared_symbols):
+        entry_symbol = "main"
+    elif exported_symbols:
+        entry_symbol = exported_symbols[0]["name"]
+    elif declared_symbols:
+        entry_symbol = declared_symbols[0]["name"]
+
     result: dict[str, Any] = {
         "language": "Python",
         "frameworkRole": infer_framework_role(file_path, is_entrypoint, is_handler, declared_symbols),
         "declaredSymbols": declared_symbols[:12],
         "exportedSymbols": exported_symbols[:10],
-        "imports": list(dict.fromkeys(filter(None, imports)))[:24],
+        "imports": list(dict.fromkeys(filter(None, visitor.imports)))[:24],
         "localCalls": list(dict.fromkeys(filter(None, local_calls)))[:24],
+        "localCallEdges": list({
+            (edge["caller"], edge["callee"]): edge for edge in local_call_edges if edge["caller"] != edge["callee"]
+        }.values())[:16],
         "configTouches": list(dict.fromkeys(config_touches))[:8],
         "externalCalls": list(dict.fromkeys(external_calls))[:8],
         "isEntrypoint": is_entrypoint,
         "isHandler": is_handler,
+        "entrySymbol": entry_symbol,
     }
 
     print(json.dumps(result), end="")

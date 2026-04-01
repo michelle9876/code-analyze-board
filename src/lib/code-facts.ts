@@ -9,7 +9,7 @@ import { truncate, uniqueStrings } from "@/lib/utils";
 
 const execFileAsync = promisify(execFile);
 
-const FACTS_VERSION = "v3";
+const FACTS_VERSION = "v4";
 const MAX_FACT_FILE_BYTES = 180_000;
 const MAX_FACT_FILES = 220;
 const IGNORED_DIRECTORIES = new Set([
@@ -58,6 +58,11 @@ export type CodeLogicFlow = {
   steps: string[];
 };
 
+export type LocalCallEdge = {
+  caller: string;
+  callee: string;
+};
+
 export type ModuleGraphSummary = {
   summary: string;
   highFanOutModules: string[];
@@ -81,11 +86,15 @@ export type FileCodeFacts = {
   externalImports: string[];
   callers: string[];
   callees: string[];
+  moduleCallers: string[];
+  moduleCallees: string[];
   localCalls: string[];
+  localCallEdges: LocalCallEdge[];
   configTouches: string[];
   externalCalls: string[];
   isEntrypoint: boolean;
   isHandler: boolean;
+  entrySymbol?: string;
   diagram: DiagramGraph;
   evidenceCards: EvidenceCard[];
 };
@@ -112,10 +121,12 @@ type RawFactResult = {
   exportedSymbols: CodeSymbol[];
   imports: string[];
   localCalls: string[];
+  localCallEdges: LocalCallEdge[];
   configTouches: string[];
   externalCalls: string[];
   isEntrypoint: boolean;
   isHandler: boolean;
+  entrySymbol?: string;
 };
 
 function toPosixPath(value: string) {
@@ -187,6 +198,82 @@ function pushSymbol(output: CodeSymbol[], name: string | undefined, kind: string
   output.push({ name: trimmed, kind: normalizeSymbolKind(kind) });
 }
 
+function getPropertyNameText(name: ts.PropertyName | ts.BindingName | undefined) {
+  if (!name) return undefined;
+  if (ts.isIdentifier(name)) return name.text;
+  if (ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text;
+  if (ts.isPrivateIdentifier(name)) return name.text;
+  return undefined;
+}
+
+function getFunctionScopeName(node: ts.Node): string | undefined {
+  if (ts.isFunctionDeclaration(node)) {
+    return node.name?.text;
+  }
+
+  if (ts.isMethodDeclaration(node)) {
+    return getPropertyNameText(node.name);
+  }
+
+  if ((ts.isFunctionExpression(node) || ts.isArrowFunction(node)) && ts.isVariableDeclaration(node.parent)) {
+    return ts.isIdentifier(node.parent.name) ? node.parent.name.text : undefined;
+  }
+
+  return undefined;
+}
+
+function formatSymbolLabel(symbol: string) {
+  if (symbol === "<module>") return "module bootstrap";
+  return symbol.includes("(") ? symbol : `${symbol}()`;
+}
+
+function uniqueCallEdges(edges: LocalCallEdge[]) {
+  const seen = new Set<string>();
+  const output: LocalCallEdge[] = [];
+
+  for (const edge of edges) {
+    const key = `${edge.caller}->${edge.callee}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(edge);
+  }
+
+  return output;
+}
+
+function buildDeveloperCallers(fact: FileCodeFacts) {
+  const entryFocused = fact.entrySymbol
+    ? fact.localCallEdges
+        .filter((edge) => edge.callee === fact.entrySymbol)
+        .map((edge) => `${formatSymbolLabel(edge.caller)} -> ${formatSymbolLabel(edge.callee)}`)
+    : [];
+
+  const moduleEdges = fact.moduleCallers.map((value) => `imported by ${value}`);
+  return uniqueStrings([...entryFocused, ...moduleEdges]).slice(0, 6);
+}
+
+function buildDeveloperCallees(fact: FileCodeFacts) {
+  const preferredLocalEdges = fact.entrySymbol
+    ? fact.localCallEdges.filter((edge) => edge.caller === fact.entrySymbol)
+    : fact.localCallEdges;
+  const localEdges = preferredLocalEdges.length ? preferredLocalEdges : fact.localCallEdges;
+  const formattedLocalEdges = localEdges.map((edge) => `${formatSymbolLabel(edge.caller)} -> ${formatSymbolLabel(edge.callee)}`);
+  const moduleEdges = fact.moduleCallees.map((value) => `imports ${value}`);
+  const externalEdges = fact.externalCalls.map((value) => `${formatSymbolLabel(fact.entrySymbol || "<module>")} -> ${formatSymbolLabel(value)}`);
+
+  return uniqueStrings([...formattedLocalEdges, ...moduleEdges, ...externalEdges]).slice(0, 6);
+}
+
+function buildLocalCallFlowSteps(fact: FileCodeFacts) {
+  const flowEdges = fact.entrySymbol
+    ? fact.localCallEdges.filter((edge) => edge.caller === fact.entrySymbol || edge.callee === fact.entrySymbol)
+    : fact.localCallEdges;
+
+  return uniqueStrings(
+    flowEdges.slice(0, 3).map((edge) => `${formatSymbolLabel(edge.caller)} -> ${formatSymbolLabel(edge.callee)}`)
+  );
+}
+
 function extractConfigTouches(content: string) {
   return uniqueStrings([
     ...Array.from(content.matchAll(/process\.env\.([A-Z0-9_]+)/g)).map((match) => `process.env.${match[1]}`),
@@ -226,6 +313,9 @@ function analyzeJsTsFile(relativePath: string, content: string): RawFactResult {
   const exportedSymbols: CodeSymbol[] = [];
   const imports: string[] = [];
   const localCalls: string[] = [];
+  const localCallEdges: LocalCallEdge[] = [];
+  const localFunctionSymbols = new Set<string>();
+  const scopeStack: string[] = [];
   for (const statement of sourceFile.statements) {
     if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
       imports.push(statement.moduleSpecifier.text);
@@ -292,12 +382,27 @@ function analyzeJsTsFile(relativePath: string, content: string): RawFactResult {
   }
 
   const visit = (node: ts.Node) => {
+    const scopeName = getFunctionScopeName(node);
+    if (scopeName) {
+      localFunctionSymbols.add(scopeName);
+      scopeStack.push(scopeName);
+    }
+
     if (ts.isCallExpression(node)) {
       const expression = node.expression;
+      let calleeName: string | undefined;
       if (ts.isIdentifier(expression)) {
-        localCalls.push(expression.text);
+        calleeName = expression.text;
       } else if (ts.isPropertyAccessExpression(expression)) {
-        localCalls.push(expression.name.text);
+        calleeName = expression.name.text;
+      }
+
+      if (calleeName) {
+        localCalls.push(calleeName);
+        localCallEdges.push({
+          caller: scopeStack[scopeStack.length - 1] || "<module>",
+          callee: calleeName
+        });
       }
 
       if (
@@ -311,6 +416,10 @@ function analyzeJsTsFile(relativePath: string, content: string): RawFactResult {
     }
 
     ts.forEachChild(node, visit);
+
+    if (scopeName) {
+      scopeStack.pop();
+    }
   };
   visit(sourceFile);
 
@@ -326,6 +435,14 @@ function analyzeJsTsFile(relativePath: string, content: string): RawFactResult {
     isHandler;
 
   const frameworkRole = inferFrameworkRole(relativePath, exportedSymbols, localCalls, isEntrypoint, isHandler);
+  const internalCallEdges = uniqueCallEdges(
+    localCallEdges.filter((edge) => edge.callee !== edge.caller && (localFunctionSymbols.has(edge.callee) || edge.callee.includes(".")))
+  ).slice(0, 16);
+  const entrySymbol =
+    (isEntrypoint && declaredSymbols.find((symbol) => symbol.name === "main")?.name) ||
+    exportedSymbols[0]?.name ||
+    declaredSymbols.find((symbol) => symbol.kind === "function" || symbol.kind === "class")?.name ||
+    declaredSymbols[0]?.name;
 
   return {
     path: relativePath,
@@ -335,10 +452,12 @@ function analyzeJsTsFile(relativePath: string, content: string): RawFactResult {
     exportedSymbols: uniqueByName(exportedSymbols).slice(0, 10),
     imports: uniqueStrings(imports).slice(0, 24),
     localCalls: uniqueStrings(localCalls).slice(0, 24),
+    localCallEdges: internalCallEdges,
     configTouches: extractConfigTouches(content),
     externalCalls: extractExternalCalls(content, localCalls),
     isEntrypoint,
-    isHandler
+    isHandler,
+    entrySymbol
   };
 }
 
@@ -386,10 +505,12 @@ async function analyzePythonFile(rootPath: string, relativePath: string): Promis
       exportedSymbols: uniqueByName(Array.isArray(parsed.exportedSymbols) ? parsed.exportedSymbols : []).slice(0, 10),
       imports: uniqueStrings(Array.isArray(parsed.imports) ? parsed.imports : []).slice(0, 24),
       localCalls: uniqueStrings(Array.isArray(parsed.localCalls) ? parsed.localCalls : []).slice(0, 24),
+      localCallEdges: uniqueCallEdges(Array.isArray(parsed.localCallEdges) ? parsed.localCallEdges : []).slice(0, 16),
       configTouches: uniqueStrings(Array.isArray(parsed.configTouches) ? parsed.configTouches : []).slice(0, 8),
       externalCalls: uniqueStrings(Array.isArray(parsed.externalCalls) ? parsed.externalCalls : []).slice(0, 8),
       isEntrypoint: Boolean(parsed.isEntrypoint),
-      isHandler: Boolean(parsed.isHandler)
+      isHandler: Boolean(parsed.isHandler),
+      entrySymbol: typeof parsed.entrySymbol === "string" ? parsed.entrySymbol : undefined
     };
   } catch {
     return null;
@@ -463,7 +584,7 @@ function buildFileDiagram(fact: FileCodeFacts, factsByPath: Record<string, FileC
   ];
   const edges: DiagramGraph["edges"] = [];
 
-  for (const caller of fact.callers.slice(0, 3)) {
+  for (const caller of fact.moduleCallers.slice(0, 3)) {
     const callerFact = factsByPath[caller];
     const id = `caller-${nodes.length}`;
     nodes.push({
@@ -475,7 +596,7 @@ function buildFileDiagram(fact: FileCodeFacts, factsByPath: Record<string, FileC
     edges.push({ from: id, to: "current", label: "calls or imports" });
   }
 
-  for (const callee of fact.callees.slice(0, 4)) {
+  for (const callee of fact.moduleCallees.slice(0, 4)) {
     const calleeFact = factsByPath[callee];
     const id = `callee-${nodes.length}`;
     nodes.push({
@@ -485,6 +606,28 @@ function buildFileDiagram(fact: FileCodeFacts, factsByPath: Record<string, FileC
       note: "Called or imported from this file"
     });
     edges.push({ from: "current", to: id, label: "calls or imports" });
+  }
+
+  if (fact.entrySymbol) {
+    const entryId = `entry-${nodes.length}`;
+    nodes.push({
+      id: entryId,
+      label: fact.entrySymbol,
+      kind: fact.isEntrypoint ? "entry" : "service",
+      note: "Primary local execution symbol"
+    });
+    edges.push({ from: "current", to: entryId, label: "defines" });
+
+    for (const edge of fact.localCallEdges.filter((item) => item.caller === fact.entrySymbol).slice(0, 3)) {
+      const targetId = `local-${nodes.length}`;
+      nodes.push({
+        id: targetId,
+        label: edge.callee,
+        kind: /config|env/i.test(edge.callee) ? "config" : /fetch|client|request|query|publish|send/i.test(edge.callee) ? "external" : "service",
+        note: "Local call flow"
+      });
+      edges.push({ from: entryId, to: targetId, label: "invokes" });
+    }
   }
 
   if (fact.configTouches[0]) {
@@ -556,6 +699,20 @@ function buildEvidenceCardsForFile(fact: FileCodeFacts): EvidenceCard[] {
     });
   }
 
+  if (fact.localCallEdges[0]) {
+    cards.push({
+      title: "Local execution flow",
+      path: fact.path,
+      symbol: fact.entrySymbol || fact.localCallEdges[0].caller,
+      kind: "service",
+      evidence: truncate(
+        buildLocalCallFlowSteps(fact).join(", "),
+        120
+      ),
+      whyItMatters: "파일 안에서 어떤 함수가 다음 함수로 이어지는지 보이면 실제 로직 흐름을 훨씬 빠르게 이해할 수 있습니다."
+    });
+  }
+
   const keySymbol = fact.exportedSymbols[0] || fact.declaredSymbols[0];
   if (keySymbol) {
     cards.push({
@@ -572,7 +729,7 @@ function buildEvidenceCardsForFile(fact: FileCodeFacts): EvidenceCard[] {
 }
 
 function chooseNextFlowTarget(current: FileCodeFacts, factsByPath: Record<string, FileCodeFacts>, visited: Set<string>) {
-  const candidates = current.callees
+  const candidates = current.moduleCallees
     .map((candidatePath) => factsByPath[candidatePath])
     .filter((candidate): candidate is FileCodeFacts => Boolean(candidate) && !visited.has(candidate.path));
 
@@ -587,8 +744,9 @@ function scoreFact(fact: FileCodeFacts, factsByPath: Record<string, FileCodeFact
     (fact.isHandler ? 5 : 0) +
     (/service/i.test(fact.frameworkRole) ? 4 : 0) +
     (/data/i.test(fact.frameworkRole) ? 3 : 0) +
-    fact.callers.length +
-    fact.callees.length;
+    fact.moduleCallers.length +
+    fact.moduleCallees.length +
+    fact.localCallEdges.length;
 
   return base + (factsByPath[fact.path]?.externalCalls.length || 0);
 }
@@ -601,7 +759,10 @@ function buildLogicFlows(entrypoints: CodeEntrypoint[], factsByPath: Record<stri
     if (!fact) continue;
 
     const visited = new Set<string>([fact.path]);
-    const steps = [`${fact.path} (${fact.frameworkRole})`];
+    const steps = uniqueStrings([
+      `${fact.path} (${fact.frameworkRole})`,
+      ...buildLocalCallFlowSteps(fact)
+    ]);
     let current = fact;
 
     for (let depth = 0; depth < 3; depth += 1) {
@@ -689,7 +850,7 @@ function buildRepoDiagram(
     );
     if (!id) continue;
 
-    const sourceEntrypoint = entrypoints.find((entrypoint) => factsByPath[entrypoint.path]?.callees.includes(filePath));
+    const sourceEntrypoint = entrypoints.find((entrypoint) => factsByPath[entrypoint.path]?.moduleCallees.includes(filePath));
     if (sourceEntrypoint && entryIds.has(sourceEntrypoint.path)) {
       edges.push({ from: entryIds.get(sourceEntrypoint.path)!, to: id, label: "flows to" });
     }
@@ -709,7 +870,7 @@ function buildRepoDiagram(
     const configId = pushNode(configSurface, "config", "Configuration touch point");
     if (!configId) continue;
     const target = Object.values(factsByPath).find((fact) => fact.path === configSurface);
-    const source = entrypoints.find((entrypoint) => factsByPath[entrypoint.path]?.callees.includes(configSurface));
+    const source = entrypoints.find((entrypoint) => factsByPath[entrypoint.path]?.moduleCallees.includes(configSurface));
     const sourceId = source ? entryIds.get(source.path) : [...nodes].find((node) => node.label === target?.path)?.id;
     if (sourceId) edges.push({ from: configId, to: sourceId, label: "configures" });
   }
@@ -756,7 +917,7 @@ function buildRepoEvidenceCards(entrypoints: CodeEntrypoint[], summary: ModuleGr
       title: "High-connectivity module",
       path: filePath,
       kind: /data/i.test(fact.frameworkRole) ? "state" : "service",
-      evidence: `${filePath} has ${fact.callers.length} callers and ${fact.callees.length} callees in the local graph.`,
+      evidence: `${filePath} has ${fact.moduleCallers.length} incoming module links, ${fact.moduleCallees.length} outgoing module links, and ${fact.localCallEdges.length} local call edges.`,
       whyItMatters: "이 모듈은 여러 흐름의 중간에서 orchestration 또는 공통 책임을 담당할 가능성이 높습니다."
     });
   }
@@ -797,7 +958,7 @@ function buildEntrypoints(factsByPath: Record<string, FileCodeFacts>) {
     .map((fact) => ({
       path: fact.path,
       kind: fact.frameworkRole,
-      symbol: fact.exportedSymbols[0]?.name || fact.declaredSymbols[0]?.name,
+      symbol: fact.entrySymbol || fact.exportedSymbols[0]?.name || fact.declaredSymbols[0]?.name,
       why: fact.isHandler
         ? "Route or handler-like exports and path structure indicate this is a request boundary."
         : `${fact.path} matches runtime/bootstrap naming and has entry-like orchestration signals.`
@@ -939,12 +1100,16 @@ async function buildRepositoryFacts(
       internalImports: importSummary.internalImports,
       externalImports: importSummary.externalImports,
       callers: [],
-      callees: importSummary.internalImports,
+      callees: [],
+      moduleCallers: [],
+      moduleCallees: importSummary.internalImports,
       localCalls: rawFact.localCalls,
+      localCallEdges: rawFact.localCallEdges,
       configTouches: rawFact.configTouches,
       externalCalls: rawFact.externalCalls,
       isEntrypoint: rawFact.isEntrypoint,
       isHandler: rawFact.isHandler,
+      entrySymbol: rawFact.entrySymbol,
       diagram: { nodes: [], edges: [] },
       evidenceCards: []
     };
@@ -952,7 +1117,7 @@ async function buildRepositoryFacts(
 
   const reverseImports = new Map<string, string[]>();
   for (const fact of Object.values(factsByPath)) {
-    for (const callee of fact.internalImports) {
+    for (const callee of fact.moduleCallees) {
       const existing = reverseImports.get(callee) || [];
       existing.push(fact.path);
       reverseImports.set(callee, existing);
@@ -960,7 +1125,9 @@ async function buildRepositoryFacts(
   }
 
   for (const fact of Object.values(factsByPath)) {
-    fact.callers = uniqueStrings(reverseImports.get(fact.path) || []).slice(0, 10);
+    fact.moduleCallers = uniqueStrings(reverseImports.get(fact.path) || []).slice(0, 10);
+    fact.callers = buildDeveloperCallers(fact);
+    fact.callees = buildDeveloperCallees(fact);
     fact.evidenceCards = buildEvidenceCardsForFile(fact);
     fact.diagram = buildFileDiagram(fact, factsByPath);
   }

@@ -755,8 +755,8 @@ function fallbackFileAnalysis(context: FileAnalysisContext, fileFacts?: FileCode
     ? fileFacts.exportedSymbols.map((symbol) => symbol.name)
     : context.exportedSymbols;
   const relatedPaths = uniqueStrings([
-    ...(fileFacts?.callers || []),
-    ...(fileFacts?.callees || []),
+    ...(fileFacts?.moduleCallers || []),
+    ...(fileFacts?.moduleCallees || []),
     ...context.imports,
     ...extractReferencePaths(context.fullContent)
   ]).slice(0, 8);
@@ -1266,6 +1266,8 @@ export async function analyzeFile(
               exportedSymbols: fileFacts.exportedSymbols.slice(0, 6),
               callers: fileFacts.callers.slice(0, 4),
               callees: fileFacts.callees.slice(0, 4),
+              localCallEdges: fileFacts.localCallEdges.slice(0, 6),
+              entrySymbol: fileFacts.entrySymbol,
               configTouches: fileFacts.configTouches.slice(0, 4),
               externalCalls: fileFacts.externalCalls.slice(0, 4),
               recentCommits: context.recentCommits.slice(0, 4),
