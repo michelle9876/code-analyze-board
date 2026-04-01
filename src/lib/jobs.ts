@@ -334,7 +334,7 @@ async function handleImportRepositoryJob(job: AnalysisJob) {
   }
 
   const previousHead = repository.headCommitSha;
-  const clone = await ensureRepositoryClone(repository.canonicalUrl, repository.clonePath);
+  const clone = await ensureRepositoryClone(repository.url || repository.canonicalUrl, repository.clonePath);
 
   await prisma.repository.update({
     where: { id: repository.id },

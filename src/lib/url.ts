@@ -37,3 +37,20 @@ export function parseGitHubUrl(input: string) {
     name: parts[1]
   };
 }
+
+export function resolveGitHubCloneUrl(input: string) {
+  const trimmed = input.trim();
+
+  const sshMatch = trimmed.match(/^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i);
+  if (sshMatch) {
+    return `ssh://git@github.com/${sshMatch[1]}/${sshMatch[2]}.git`;
+  }
+
+  const sshProtocolMatch = trimmed.match(/^ssh:\/\/git@github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i);
+  if (sshProtocolMatch) {
+    return `ssh://git@github.com/${sshProtocolMatch[1]}/${sshProtocolMatch[2]}.git`;
+  }
+
+  const canonicalUrl = normalizeGitHubUrl(trimmed);
+  return `${canonicalUrl}.git`;
+}

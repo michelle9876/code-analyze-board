@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { getRepositoryClonePath } from "@/lib/git";
 import { enqueueJob } from "@/lib/jobs";
 import { ensureDefaultCategories, serializeRepository } from "@/lib/queries";
-import { normalizeGitHubUrl, parseGitHubUrl } from "@/lib/url";
+import { normalizeGitHubUrl, parseGitHubUrl, resolveGitHubCloneUrl } from "@/lib/url";
 
 export const dynamic = "force-dynamic";
 
@@ -22,10 +22,12 @@ export async function POST(request: Request) {
 
     let canonicalUrl: string;
     let parsedUrl: { canonicalUrl: string; owner: string; name: string };
+    let cloneUrl: string;
 
     try {
       canonicalUrl = normalizeGitHubUrl(parsedBody.data.url);
       parsedUrl = parseGitHubUrl(parsedBody.data.url);
+      cloneUrl = resolveGitHubCloneUrl(parsedBody.data.url);
     } catch {
       return NextResponse.json(
         { error: "public GitHub repository URL 형식이 올바르지 않습니다." },
@@ -67,7 +69,7 @@ export async function POST(request: Request) {
       data: {
         name: parsedUrl.name,
         owner: parsedUrl.owner,
-        url: parsedBody.data.url,
+        url: cloneUrl,
         canonicalUrl,
         clonePath: getRepositoryClonePath(canonicalUrl),
         status: "IMPORTING",

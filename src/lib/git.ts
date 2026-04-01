@@ -32,23 +32,54 @@ async function pathExists(targetPath: string) {
   }
 }
 
+function buildGitClient(baseDir?: string) {
+  const client = baseDir ? simpleGit(baseDir) : simpleGit();
+
+  client.env("GIT_TERMINAL_PROMPT", "0");
+  client.env("GIT_ASKPASS", "/usr/bin/true");
+  client.env("GCM_INTERACTIVE", "Never");
+
+  return client;
+}
+
+function normalizeGitAuthError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "Git operation failed.");
+  const lowered = message.toLowerCase();
+
+  if (
+    lowered.includes("could not read username") ||
+    lowered.includes("could not read password") ||
+    lowered.includes("authentication failed") ||
+    lowered.includes("repository not found") ||
+    lowered.includes("terminal prompts disabled")
+  ) {
+    return new Error("Git authentication is required for this repository. Public repos import immediately, but private repos need credentials or SSH access.");
+  }
+
+  return error instanceof Error ? error : new Error(message);
+}
+
 export async function ensureRepositoryClone(canonicalUrl: string, existingClonePath?: string) {
   const clonePath = existingClonePath || getRepositoryClonePath(canonicalUrl);
   await fs.mkdir(getRepoStorageRoot(), { recursive: true });
 
-  if (await pathExists(path.join(clonePath, ".git"))) {
-    const git = simpleGit(clonePath);
-    await git.fetch(["--all", "--prune"]);
+  try {
+    if (await pathExists(path.join(clonePath, ".git"))) {
+      const git = buildGitClient(clonePath);
+      await git.fetch(["--all", "--prune"]);
 
-    const currentBranch = await git.revparse(["--abbrev-ref", "HEAD"]).catch(() => "HEAD");
-    if (currentBranch !== "HEAD") {
-      await git.pull("origin", currentBranch);
+      const currentBranch = await git.revparse(["--abbrev-ref", "HEAD"]).catch(() => "HEAD");
+      if (currentBranch !== "HEAD") {
+        await git.pull("origin", currentBranch);
+      }
+    } else {
+      await buildGitClient().clone(canonicalUrl, clonePath, ["--depth", "50"]);
     }
-  } else {
-    await simpleGit().clone(canonicalUrl, clonePath, ["--depth", "50"]);
+  } catch (error) {
+    throw normalizeGitAuthError(error);
   }
 
-  const git = simpleGit(clonePath);
+  const git = buildGitClient(clonePath);
   const defaultBranch = await git.revparse(["--abbrev-ref", "HEAD"]).catch(() => "main");
   const headCommitSha = await git.revparse(["HEAD"]);
 
@@ -60,7 +91,7 @@ export async function ensureRepositoryClone(canonicalUrl: string, existingCloneP
 }
 
 export async function getHeadCommitSha(clonePath: string) {
-  return simpleGit(clonePath).revparse(["HEAD"]);
+  return buildGitClient(clonePath).revparse(["HEAD"]);
 }
 
 function parseCommitLog(raw: string) {
@@ -102,7 +133,7 @@ function parseCommitLog(raw: string) {
 }
 
 export async function readRecentCommits(clonePath: string, limit = MAX_COMMITS_FOR_HISTORY) {
-  const git = simpleGit(clonePath);
+  const git = buildGitClient(clonePath);
   const raw = await git.raw([
     "log",
     "--date=short",
@@ -116,7 +147,7 @@ export async function readRecentCommits(clonePath: string, limit = MAX_COMMITS_F
 }
 
 export async function readPathCommits(clonePath: string, relativePath: string, limit = MAX_COMMITS_PER_PATH) {
-  const git = simpleGit(clonePath);
+  const git = buildGitClient(clonePath);
   const raw = await git.raw([
     "log",
     "--date=short",
