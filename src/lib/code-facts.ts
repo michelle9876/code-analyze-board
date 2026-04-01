@@ -9,7 +9,7 @@ import { truncate, uniqueStrings } from "@/lib/utils";
 
 const execFileAsync = promisify(execFile);
 
-const FACTS_VERSION = "v9";
+const FACTS_VERSION = "v10";
 const MAX_FACT_FILE_BYTES = 180_000;
 const MAX_FACT_FILES = 220;
 const IGNORED_DIRECTORIES = new Set([
@@ -982,12 +982,20 @@ function buildReadingOrder(entrypoints: CodeEntrypoint[], summary: ModuleGraphSu
 function inferDiagramKindFromFlowStep(step: string): DiagramGraph["nodes"][number]["kind"] {
   const lower = step.toLowerCase();
   if (lower.startsWith("config:") || /env|config/.test(lower)) return "config";
-  if (lower.startsWith("external:") || /fetch|request|response|json\.load|sys\.exit|redis|prisma|db|query|client/.test(lower)) return "external";
+  if (lower.startsWith("external:")) return "external";
   if (/\(\s*runtime entry\s*\)|\(\s*api handler\s*\)/i.test(step)) return "entry";
   if (/\(\s*data access module\s*\)/i.test(step)) return "data";
   if (/\(\s*ui/.test(lower)) return "ui";
   if (/\(\s*service/.test(lower)) return "service";
-  if (step.includes("->")) return "service";
+  if (step.includes("->")) {
+    const target = step.split("->").pop()?.trim().toLowerCase() || "";
+    if (/env|config|process\.env|import\.meta\.env/.test(target)) return "config";
+    if (/fetch\(|^fetch$|response\.(json|text)|json\.load|sys\.exit|redis|prisma|db|query|client|publish|send|enqueue/.test(target)) {
+      return "external";
+    }
+    if (/store|cache|repository|model|schema/.test(target)) return "data";
+    return "service";
+  }
   return "module";
 }
 
