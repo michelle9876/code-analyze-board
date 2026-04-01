@@ -153,13 +153,16 @@ def main() -> int:
         if re.search(r"requests|httpx|boto3|redis|sqlalchemy|subprocess|publish|send|enqueue", name, re.I):
             external_calls.append(name)
 
+    function_symbols = [symbol["name"] for symbol in declared_symbols if symbol["kind"] == "function"]
+    class_symbols = [symbol["name"] for symbol in declared_symbols if symbol["kind"] == "class"]
+
     entry_symbol = None
-    if is_entrypoint and any(symbol["name"] == "main" for symbol in declared_symbols):
+    if is_entrypoint and any(symbol == "main" for symbol in function_symbols):
         entry_symbol = "main"
-    elif exported_symbols:
-        entry_symbol = exported_symbols[0]["name"]
-    elif declared_symbols:
-        entry_symbol = declared_symbols[0]["name"]
+    elif function_symbols:
+        entry_symbol = function_symbols[0]
+    elif not is_entrypoint and class_symbols:
+        entry_symbol = class_symbols[0]
 
     result: dict[str, Any] = {
         "language": "Python",

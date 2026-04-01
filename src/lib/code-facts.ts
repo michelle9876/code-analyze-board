@@ -9,7 +9,7 @@ import { truncate, uniqueStrings } from "@/lib/utils";
 
 const execFileAsync = promisify(execFile);
 
-const FACTS_VERSION = "v4";
+const FACTS_VERSION = "v6";
 const MAX_FACT_FILE_BYTES = 180_000;
 const MAX_FACT_FILES = 220;
 const IGNORED_DIRECTORIES = new Set([
@@ -222,6 +222,32 @@ function getFunctionScopeName(node: ts.Node): string | undefined {
   return undefined;
 }
 
+function getCallExpressionName(expression: ts.Expression): string | undefined {
+  if (ts.isIdentifier(expression)) {
+    return expression.text;
+  }
+
+  if (ts.isPropertyAccessExpression(expression)) {
+    const parent = getCallExpressionName(expression.expression);
+    return parent ? `${parent}.${expression.name.text}` : expression.name.text;
+  }
+
+  if (ts.isElementAccessExpression(expression) && ts.isStringLiteral(expression.argumentExpression)) {
+    const parent = getCallExpressionName(expression.expression);
+    return parent ? `${parent}.${expression.argumentExpression.text}` : expression.argumentExpression.text;
+  }
+
+  if (ts.isCallExpression(expression)) {
+    return getCallExpressionName(expression.expression);
+  }
+
+  return undefined;
+}
+
+function lastSymbolSegment(name: string) {
+  return name.split(".").filter(Boolean).pop() || name;
+}
+
 function formatSymbolLabel(symbol: string) {
   if (symbol === "<module>") return "module bootstrap";
   return symbol.includes("(") ? symbol : `${symbol}()`;
@@ -272,6 +298,66 @@ function buildLocalCallFlowSteps(fact: FileCodeFacts) {
   return uniqueStrings(
     flowEdges.slice(0, 3).map((edge) => `${formatSymbolLabel(edge.caller)} -> ${formatSymbolLabel(edge.callee)}`)
   );
+}
+
+function chooseEntrypointSymbol(input: {
+  relativePath: string;
+  isEntrypoint: boolean;
+  isHandler: boolean;
+  declaredSymbols: CodeSymbol[];
+  exportedSymbols: CodeSymbol[];
+  localFunctionSymbols: Set<string>;
+  internalCallEdges: LocalCallEdge[];
+}) {
+  const runtimeNamePriority = ["main", "run", "start", "bootstrap", "handler", "execute", "init", "cli"];
+  const functionSymbols = uniqueStrings(
+    [
+      ...input.exportedSymbols.filter((symbol) => symbol.kind === "function").map((symbol) => symbol.name),
+      ...input.declaredSymbols.filter((symbol) => symbol.kind === "function").map((symbol) => symbol.name)
+    ].map((name) => lastSymbolSegment(name))
+  );
+  const classSymbols = uniqueStrings(
+    [
+      ...input.exportedSymbols.filter((symbol) => symbol.kind === "class").map((symbol) => symbol.name),
+      ...input.declaredSymbols.filter((symbol) => symbol.kind === "class").map((symbol) => symbol.name)
+    ].map((name) => lastSymbolSegment(name))
+  );
+  const variableSymbols = uniqueStrings(
+    [
+      ...input.exportedSymbols.filter((symbol) => symbol.kind === "variable").map((symbol) => symbol.name),
+      ...input.declaredSymbols.filter((symbol) => symbol.kind === "variable").map((symbol) => symbol.name)
+    ].map((name) => lastSymbolSegment(name))
+  );
+
+  const bootstrapTargets = uniqueStrings(
+    input.internalCallEdges
+      .filter((edge) => edge.caller === "<module>")
+      .map((edge) => lastSymbolSegment(edge.callee))
+      .filter((name) => input.localFunctionSymbols.has(name))
+  );
+
+  if (input.isHandler) {
+    const httpMethod = input.exportedSymbols.find((symbol) => ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"].includes(symbol.name));
+    if (httpMethod) {
+      return httpMethod.name;
+    }
+  }
+
+  for (const preferred of runtimeNamePriority) {
+    if (bootstrapTargets.includes(preferred)) return preferred;
+    if (functionSymbols.includes(preferred)) return preferred;
+    if (classSymbols.includes(preferred)) return preferred;
+  }
+
+  if (bootstrapTargets[0]) return bootstrapTargets[0];
+
+  const preferredByPath = [...functionSymbols, ...classSymbols].find((name) => input.relativePath.toLowerCase().includes(name.toLowerCase()));
+  if (input.isEntrypoint && preferredByPath) return preferredByPath;
+
+  if (functionSymbols[0]) return functionSymbols[0];
+  if (!input.isEntrypoint && classSymbols[0]) return classSymbols[0];
+  if (!input.isEntrypoint && variableSymbols[0]) return variableSymbols[0];
+  return undefined;
 }
 
 function extractConfigTouches(content: string) {
@@ -390,12 +476,7 @@ function analyzeJsTsFile(relativePath: string, content: string): RawFactResult {
 
     if (ts.isCallExpression(node)) {
       const expression = node.expression;
-      let calleeName: string | undefined;
-      if (ts.isIdentifier(expression)) {
-        calleeName = expression.text;
-      } else if (ts.isPropertyAccessExpression(expression)) {
-        calleeName = expression.name.text;
-      }
+      const calleeName = getCallExpressionName(expression);
 
       if (calleeName) {
         localCalls.push(calleeName);
@@ -406,8 +487,7 @@ function analyzeJsTsFile(relativePath: string, content: string): RawFactResult {
       }
 
       if (
-        ts.isIdentifier(expression) &&
-        expression.text === "require" &&
+        calleeName === "require" &&
         node.arguments[0] &&
         ts.isStringLiteral(node.arguments[0])
       ) {
@@ -424,10 +504,11 @@ function analyzeJsTsFile(relativePath: string, content: string): RawFactResult {
   visit(sourceFile);
 
   const exportedNames = exportedSymbols.map((symbol) => symbol.name);
+  const hasRouteRegistration = /\b(router|app)\.(get|post|put|patch|delete|options|head)\s*\(/i.test(content);
   const isHandler =
     /\/api\/|route\.(t|j)sx?$|controller|router|handler/.test(relativePath.toLowerCase()) ||
     exportedNames.some((name) => ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"].includes(name)) ||
-    localCalls.some((name) => /router|get|post|put|delete|patch/i.test(name));
+    hasRouteRegistration;
   const isEntrypoint =
     content.startsWith("#!") ||
     /(^|\/)(main|server|app|cli|worker|bin|index)\.(t|j)sx?$/.test(relativePath) ||
@@ -436,13 +517,20 @@ function analyzeJsTsFile(relativePath: string, content: string): RawFactResult {
 
   const frameworkRole = inferFrameworkRole(relativePath, exportedSymbols, localCalls, isEntrypoint, isHandler);
   const internalCallEdges = uniqueCallEdges(
-    localCallEdges.filter((edge) => edge.callee !== edge.caller && (localFunctionSymbols.has(edge.callee) || edge.callee.includes(".")))
+    localCallEdges.filter((edge) => {
+      const calleeBase = lastSymbolSegment(edge.callee);
+      return edge.callee !== edge.caller && (localFunctionSymbols.has(calleeBase) || edge.callee.includes("."));
+    })
   ).slice(0, 16);
-  const entrySymbol =
-    (isEntrypoint && declaredSymbols.find((symbol) => symbol.name === "main")?.name) ||
-    exportedSymbols[0]?.name ||
-    declaredSymbols.find((symbol) => symbol.kind === "function" || symbol.kind === "class")?.name ||
-    declaredSymbols[0]?.name;
+  const entrySymbol = chooseEntrypointSymbol({
+    relativePath,
+    isEntrypoint,
+    isHandler,
+    declaredSymbols,
+    exportedSymbols,
+    localFunctionSymbols,
+    internalCallEdges
+  });
 
   return {
     path: relativePath,
